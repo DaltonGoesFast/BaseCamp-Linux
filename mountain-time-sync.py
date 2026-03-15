@@ -66,14 +66,15 @@ def _release(dev):
             pass
     usb.util.dispose_resources(dev)
 
+_EMPTY_PKT = bytes(PKT_SIZE)
+
 def _read(dev, timeout=1000):
-    """Read one packet, return it. On button event, queue it and keep reading."""
-    while True:
+    """Read one packet, return it. Returns empty packet on timeout."""
+    try:
         data = dev.read(EP_IN, PKT_SIZE, timeout=timeout)
-        if data[0] != 0x01:
-            return data
-        # Button event — return it so callers can handle it
         return data
+    except usb.core.USBTimeoutError:
+        return _EMPTY_PKT
 
 def icon_id(button_idx, variant):
     """Return the icon_id for a given button (0-3) and variant (0-8)."""
@@ -89,15 +90,15 @@ def _send_time_packet(dev, style):
         fmt = "24H"
     hour = (now.hour % 12) or 12 if fmt == "12H" else now.hour
     dev.write(EP_OUT, make_packet(0x11, 0x80, 0x00, 0x00, 0x01))
-    dev.read(EP_IN, PKT_SIZE, timeout=1000)
+    _read(dev)
     dev.write(EP_OUT, make_packet(0x11, 0x84, 0x00, 0x00))
-    dev.read(EP_IN, PKT_SIZE, timeout=1000)
+    _read(dev)
     dev.write(EP_OUT, make_packet(
         0x11, 0x84, 0x00, 0x01, 0x00, 0x00,
         now.month, now.day, hour, now.minute,
         now.second, style
     ))
-    dev.read(EP_IN, PKT_SIZE, timeout=1000)
+    _read(dev)
 
 def _send_cpu_packet(dev, cpu_percent):
     dev.write(EP_OUT, make_packet(0x11, 0x14))
@@ -109,7 +110,10 @@ def _set_icon(dev, button_idx, variant):
     """Set icon for one numpad button."""
     iid = icon_id(button_idx, variant)
     dev.write(EP_OUT, make_packet(0x11, 0x00))
-    _read(dev)
+    try:
+        _read(dev)
+    except usb.core.USBTimeoutError:
+        pass
     dev.write(EP_OUT, make_packet(0x11, 0x02, 0x00, 0x01, 0x01, iid, 0x02))
     # Drain all response chunks
     while True:
@@ -131,11 +135,20 @@ def _write_action(dev, button_idx, command):
     pkt = make_packet(0x17, 0xAA, total_len, 0x00, 0x04, *cmd_bytes)
     # Button auswählen: 12 08 00 [btn_idx+1] 00
     dev.write(EP_OUT, make_packet(0x12, 0x08, 0x00, button_idx + 1))
-    _read(dev)
+    try:
+        _read(dev)
+    except usb.core.USBTimeoutError:
+        pass
     dev.write(EP_OUT, pkt)
-    _read(dev)
+    try:
+        _read(dev)
+    except usb.core.USBTimeoutError:
+        pass
 
 ICON_IMG_SIZE = 10368  # 72×72 × 2 bytes (RGB565)
+MAIN_IMG_SIZE = 97920  # 240×204 × 2 bytes (RGB565)
+MAIN_DISPLAY_W = 240
+MAIN_DISPLAY_H = 204
 
 def _ctrl_set_report(dev, data):
     """Send HID Feature SET_REPORT (64 bytes) on interface 3."""
@@ -147,50 +160,23 @@ def _ctrl_get_report(dev):
     """Read HID Feature GET_REPORT (64 bytes) on interface 3."""
     return bytes(dev.ctrl_transfer(0xA1, 0x01, 0x0300, INTERFACE, 64, timeout=3000))
 
-def _erase_session(dev, session_num, has_data, sectors=(0x01, 0x02)):
-    """One erase session.
+def _erase_session(dev, session_num, sectors=(0x01, 0x02)):
+    """One erase session — per-sector protocol confirmed from USB captures.
 
-    If has_data (initial state fa): send 21 XX per sector separately.
-    If no data (initial state fb): send first sector cmd once and poll for 2x fa.
+    Sends a separate 21 XX command for each sector and polls until 80 fa.
     sectors: tuple of (sector1_cmd, sector2_cmd) — depends on button index.
     """
-    print(f"  Erase session {session_num} (has_data={has_data}, sectors={[hex(s) for s in sectors]})...", flush=True)
-    if has_data:
-        # Capture protocol: separate command per sector
-        for sector_idx, sector_cmd in enumerate(sectors, start=1):
-            _ctrl_set_report(dev, bytes([0xaa, 0x55, 0x21, sector_cmd]))
-            r = _ctrl_get_report(dev)
-            print(f"    Sector {sector_idx} (21 {sector_cmd:02x}): {r[:4].hex()}", flush=True)
-            for i in range(100):
-                time.sleep(0.030)
-                _ctrl_set_report(dev, bytes([0xaa, 0x55, 0x80, 0x00]))
-                r = _ctrl_get_report(dev)
-                if r[2:4] == bytes([0x80, 0xfa]):
-                    print(f"    Sector {sector_idx} erased at poll #{i}: {r[:6].hex()}", flush=True)
-                    break
-            else:
-                print(f"    WARNING: sector {sector_idx} never got fa", flush=True)
-            _ctrl_set_report(dev, bytes([0xaa, 0x55, 0x21, 0x00]))
-            _ctrl_get_report(dev)
-    else:
-        # test_upload9 protocol: one sector cmd, poll for 2x fa
-        _ctrl_set_report(dev, bytes([0xaa, 0x55, 0x21, sectors[0]]))
-        r = _ctrl_get_report(dev)
-        print(f"    21 01: {r[:4].hex()}", flush=True)
-        fa_count = 0
+    for sector_idx, sector_cmd in enumerate(sectors, start=1):
+        _ctrl_set_report(dev, bytes([0xaa, 0x55, 0x21, sector_cmd]))
+        _ctrl_get_report(dev)
         for i in range(100):
             time.sleep(0.030)
             _ctrl_set_report(dev, bytes([0xaa, 0x55, 0x80, 0x00]))
             r = _ctrl_get_report(dev)
             if r[2:4] == bytes([0x80, 0xfa]):
-                fa_count += 1
-                print(f"    Sector {fa_count} erased at poll #{i}: {r[:6].hex()}", flush=True)
-                _ctrl_set_report(dev, bytes([0xaa, 0x55, 0x21, 0x00]))
-                _ctrl_get_report(dev)
-                if fa_count >= 2:
-                    break
-        else:
-            print(f"    WARNING: only {fa_count}/2 sectors erased", flush=True)
+                break
+        _ctrl_set_report(dev, bytes([0xaa, 0x55, 0x21, 0x00]))
+        _ctrl_get_report(dev)
 
 def _upload_icon_image(dev, button_idx, img_bytes):
     """Upload 72×72 RGB565 LE image to numpad button via HID Feature Reports.
@@ -213,95 +199,170 @@ def _upload_icon_image(dev, button_idx, img_bytes):
         except Exception: pass
         time.sleep(0.05)
 
-    r = _ctrl_get_report(dev)  # initial state poll
-    print(f"  Initial state: {r[:8].hex()}", flush=True)
-    has_data = (r[2:4] == bytes([0x10, 0xfa]))
+    _ctrl_get_report(dev)  # initial state poll
+    print("PROGRESS:5", flush=True)
 
     # Sector numbers depend on button index: D1→(1,2), D2→(3,4), D3→(5,6), D4→(7,8)
     sectors = (button_idx * 2 + 1, button_idx * 2 + 2)
     # Two erase sessions with 5.5s gap (from capture)
-    _erase_session(dev, 1, has_data, sectors)
-    print("  Waiting 5.5s between sessions...", flush=True)
-    time.sleep(5.5)
-    _erase_session(dev, 2, has_data, sectors)
-    time.sleep(0.5)
+    _erase_session(dev, 1, sectors)
+    print("PROGRESS:20", flush=True)
+    for _i in range(11):  # 5.5s gap, report progress every 0.5s
+        time.sleep(0.5)
+        print(f"PROGRESS:{22 + _i * 2}", flush=True)  # 22..42
+    _erase_session(dev, 2, sectors)
+    time.sleep(2.0)
+    print("PROGRESS:55", flush=True)
 
-    # Handshake
-    _ctrl_set_report(dev, bytes([0xaa, 0x55, 0x21, 0x04]))
-    r = _ctrl_get_report(dev)
-    print(f"  Handshake 21 04: {r[:4].hex()}", flush=True)
-    _ctrl_set_report(dev, bytes([0xaa, 0x55, 0x22, 0x00]))
-    r = _ctrl_get_report(dev)
-    print(f"  Handshake 22 00: {r[:6].hex()}", flush=True)
-
-    # Descriptor (token 6b e9 from capture_icon_upload.bin)
+    # Handshake + descriptor, retry once if descriptor poll times out
     desc = bytes([0xaa, 0x55, 0x10, 0x80, 0x28, 0x00,
                   0x6b, 0xe9,
                   0x00, 0x00, 0x02, 0x01, button_idx])
-    _ctrl_set_report(dev, desc)
-    # Wait 130ms before first GET — device needs uninterrupted time to prepare flash
-    time.sleep(0.130)
-    r = _ctrl_get_report(dev)
-    print(f"  Descriptor GET: {r[:4].hex()}", flush=True)
-    if r[2:4] == bytes([0x10, 0xfb]):
-        print("  Polling for descriptor fa...", flush=True)
-        for i in range(30):
+    for _try in range(3):
+        _ctrl_set_report(dev, bytes([0xaa, 0x55, 0x21, 0x04]))
+        _ctrl_get_report(dev)
+        _ctrl_set_report(dev, bytes([0xaa, 0x55, 0x22, 0x00]))
+        _ctrl_get_report(dev)
+        _ctrl_set_report(dev, desc)
+        time.sleep(0.130)
+        r = _ctrl_get_report(dev)
+        if r[2:4] == bytes([0x10, 0xfa]):
+            break
+        for _ in range(100):
             time.sleep(0.150)
             r = _ctrl_get_report(dev)
-            print(f"    poll {i}: {r[:4].hex()}", flush=True)
             if r[2:4] == bytes([0x10, 0xfa]):
                 break
         else:
+            if _try < 2:
+                time.sleep(3.0)  # extra wait before retry
+                continue
             raise RuntimeError("Descriptor never became ready (fa)")
+        break
+    print("PROGRESS:60", flush=True)
 
     # Stream chunks: resend same chunk until committed (fa), then advance offset.
     # This matches Windows behavior: only advance to next chunk after fa confirms commit.
-    chunk_size = 64
     target = ICON_IMG_SIZE
     bytes_committed = 0
-    fa_count = 0
     next_offset = 0
     for attempt in range(600):
-        chunk = img_bytes[next_offset:next_offset + chunk_size]
+        chunk = img_bytes[next_offset:next_offset + 64]
         _ctrl_set_report(dev, chunk)
         time.sleep(0.030)
         r = _ctrl_get_report(dev)
         if r[2:4] == bytes([0x10, 0xfa]):
-            fa_count += 1
             bytes_committed = int.from_bytes(r[4:6], 'little')
-            next_offset = bytes_committed  # advance to next uncommitted position
-            if fa_count <= 3 or fa_count % 40 == 0 or bytes_committed >= target:
-                print(f"  attempt {attempt:03d}: fa #{fa_count}, {bytes_committed}/{target} bytes", flush=True)
+            next_offset = bytes_committed
+            pct = 60 + int(bytes_committed * 40 / target)
+            print(f"PROGRESS:{pct}", flush=True)
             if bytes_committed >= target:
-                print(f"  All {target} bytes committed! ({attempt+1} attempts)", flush=True)
                 break
         # if fb: don't advance next_offset, retry same chunk next iteration
-    else:
-        print(f"  WARNING: loop ended, fa_count={fa_count}, committed={bytes_committed}/{target}", flush=True)
 
     # Wait for display update signal on interrupt endpoint (max 4s)
-    print("  Waiting for ff aa...", flush=True)
     dev.write(EP_OUT, make_packet(0x11, 0x14))
     got_ffaa = False
     for _ in range(20):
         try:
             r = bytes(dev.read(EP_IN, PKT_SIZE, timeout=200))
             if r[:2] == bytes([0xff, 0xaa]):
-                print("  ff aa received — display updated!", flush=True)
                 got_ffaa = True
                 break
         except usb.core.USBTimeoutError:
             pass
-    if not got_ffaa:
-        print("  WARNING: no ff aa received", flush=True)
 
-def image_to_rgb565(image_path, size=(72, 72)):
-    """Convert image file to 72×72 RGB565 little-endian bytes."""
+def _upload_main_display_image(dev, img_bytes):
+    """Upload a 240×204 RGB565 LE image to the main display.
+
+    Protocol (reverse-engineered from capture_main_display.pcap):
+      11 14 keepalive (no 11 12!) → 21 03 session open → 22 00 slot prepare →
+      descriptor (send, if fb resend once) → chunk stream (fb=retry, fa=advance) →
+      11 14 mode switch (b10=0x01) → 13 41 00 00 01 activate
+    """
+    assert len(img_bytes) == MAIN_IMG_SIZE, f"Expected {MAIN_IMG_SIZE} bytes, got {len(img_bytes)}"
+
+    # 11 14 keepalive to read dev_bytes for mode switch later (no 11 12 — main display
+    # upload uses only ctrl_transfer; 11 12 interferes with the flash controller state)
+    dev_info = bytearray(PKT_SIZE)
+    dev.write(EP_OUT, make_packet(0x11, 0x14))
+    try:
+        resp = bytearray(dev.read(EP_IN, PKT_SIZE, timeout=500))
+        if any(resp[7:10]):
+            dev_info = resp
+    except Exception: pass
+    print("PROGRESS:5", flush=True)
+
+    # Session open → slot prepare
+    _ctrl_set_report(dev, bytes([0xaa, 0x55, 0x21, 0x03]))
+    _ctrl_get_report(dev)
+    _ctrl_set_report(dev, bytes([0xaa, 0x55, 0x22, 0x00]))
+    _ctrl_get_report(dev)
+
+    # Descriptor: send once, poll 130ms; if fb resend (capture: 2 sends → fb → fa)
+    desc = bytes([0xaa, 0x55, 0x10, 0x80, 0x7e, 0x01, 0xec, 0x46, 0x00, 0x00, 0x02, 0x01, 0x00])
+    _ctrl_set_report(dev, desc)
+    for _ in range(5):
+        time.sleep(0.130)
+        r = _ctrl_get_report(dev)
+        if r[2:4] == bytes([0x10, 0xfa]):
+            break
+        _ctrl_set_report(dev, desc)  # fb: resend (matches capture)
+    else:
+        raise RuntimeError("Main display descriptor never became ready (fa)")
+    print("PROGRESS:10", flush=True)
+
+    # Stream chunks: fb = busy (retry same chunk), fa = committed (advance)
+    target = MAIN_IMG_SIZE
+    next_offset = 0
+    fa_count = 0
+    for _ in range(4000):
+        chunk = img_bytes[next_offset:next_offset + 64]
+        _ctrl_set_report(dev, chunk)
+        time.sleep(0.030)
+        r = _ctrl_get_report(dev)
+        if r[2:4] == bytes([0x10, 0xfa]):
+            fa_count += 1
+            next_offset = fa_count * 64
+            pct = 10 + int(next_offset * 90 / target)
+            print(f"PROGRESS:{pct}", flush=True)
+            if next_offset >= target:
+                break
+        # fb: retry same chunk (don't advance)
+
+    # Mode switch + activate within the same session (from capture_main_display.pcap)
+    dev_bytes = bytes(dev_info[7:10]) if any(dev_info[7:10]) else bytes([0xf3, 0xcc, 0x23])
+    mode_pkt = make_packet(
+        0x11, 0x14, 0x00, 0x01, 0x02, 0xff, 0x00,
+        dev_bytes[0], dev_bytes[1], dev_bytes[2],
+        0x01, 0x1e, 0x00, 0x1e, 0x00, 0x01,
+        0x12, 0x13, 0x14, 0x15, 0x02, 0x00, 0x32, 0x00)
+    dev.write(EP_OUT, mode_pkt)
+    try: dev.read(EP_IN, PKT_SIZE, timeout=1000)
+    except Exception: pass
+    time.sleep(0.050)
+
+    dev.write(EP_OUT, make_packet(0x13, 0x41, 0x00, 0x00, 0x01))
+    try: dev.read(EP_IN, PKT_SIZE, timeout=2000)
+    except Exception: pass
+
+
+def image_to_rgb565(image_path, size=(72, 72), frame=0):
+    """Convert image file to RGB565 little-endian bytes at the given size.
+
+    size=(72, 72)    → numpad button displays (D1-D4)
+    size=(240, 204)  → main OLED display
+
+    For animated GIFs, ``frame`` selects which frame to use (0-based).
+    """
     try:
         from PIL import Image
     except ImportError:
         raise RuntimeError("Pillow not installed. Run: pip install pillow")
-    img = Image.open(image_path).resize(size, Image.LANCZOS).convert('RGB')
+    img = Image.open(image_path)
+    if frame > 0 and getattr(img, 'n_frames', 1) > 1:
+        img.seek(min(frame, img.n_frames - 1))
+    img = img.resize(size, Image.LANCZOS).convert('RGB')
     data = bytearray()
     for y in range(size[1]):
         for x in range(size[0]):
@@ -314,7 +375,10 @@ def _read_action(dev, button_idx):
     """Liest die gespeicherte Aktion aus dem Keyboard-Flash zurück."""
     iid = icon_id(button_idx, 7)  # Standard-Variant
     dev.write(EP_OUT, make_packet(0x11, 0x00))
-    _read(dev)
+    try:
+        _read(dev)
+    except usb.core.USBTimeoutError:
+        return ""
     dev.write(EP_OUT, make_packet(0x11, 0x02, 0x00, 0x01, 0x01, iid, 0x02))
     while True:
         try:
@@ -376,9 +440,81 @@ def send_time(style=STYLE_ANALOG):
     finally:
         _release(dev)
 
-def upload_icon(button_idx, image_path):
-    """Upload a custom image (PNG/JPG) to a numpad button display."""
-    img_bytes = image_to_rgb565(image_path)
+def set_main_display_mode(mode, style=STYLE_ANALOG):
+    """Switch the main display between 'image' and 'clock' mode.
+
+    Protocol from capture_main_clock_switch.pcap:
+      Send 11 14 00 01 02 ff 00 [dev_bytes_7-9] [b10] 1e 00 1e 00 01 12 13 14 15 02 00 32 00...
+      b10=0x11 → clock active, b10=0x01 → image active
+      dev_bytes_7-9 are device-specific, read from keyboard's own 11 14 response.
+    """
+    dev = usb.core.find(idVendor=VID, idProduct=PID)
+    if dev is None:
+        print("Keyboard nicht gefunden!", file=sys.stderr)
+        sys.exit(1)
+    _claim(dev)
+    try:
+        # Init interrupt endpoint
+        dev.write(EP_OUT, make_packet(0x11, 0x12))
+        try: dev.read(EP_IN, PKT_SIZE, timeout=500)
+        except Exception: pass
+
+        # Read keyboard's current 11 14 state to get device-specific bytes[7-9]
+        dev.write(EP_OUT, make_packet(0x11, 0x14))
+        try:
+            info = bytearray(dev.read(EP_IN, PKT_SIZE, timeout=1000))
+        except Exception:
+            info = bytearray(PKT_SIZE)
+
+        dev_bytes = bytes(info[7:10]) if any(info[7:10]) else bytes([0xf3, 0xcc, 0x23])
+
+        # Build mode-switch packet
+        b10 = 0x11 if mode == "clock" else 0x01
+        pkt = bytearray(PKT_SIZE)
+        pkt[0]     = 0x11
+        pkt[1]     = 0x14
+        pkt[3]     = 0x01          # write flag
+        pkt[4]     = 0x02
+        pkt[5]     = 0xff
+        pkt[7:10]  = dev_bytes
+        pkt[10]    = b10
+        pkt[11]    = 0x1e
+        pkt[13]    = 0x1e
+        pkt[15]    = 0x01
+        pkt[16:20] = bytes([0x12, 0x13, 0x14, 0x15])
+        pkt[20]    = 0x02
+        pkt[22]    = 0x32
+
+        dev.write(EP_OUT, bytes(pkt))
+        try: dev.read(EP_IN, PKT_SIZE, timeout=500)
+        except Exception: pass
+
+        # When switching to image mode, also activate the committed image data
+        if mode == "image":
+            dev.write(EP_OUT, make_packet(0x13, 0x41, 0x00, 0x00, 0x01))
+            try: dev.read(EP_IN, PKT_SIZE, timeout=2000)
+            except Exception: pass
+    finally:
+        _release(dev)
+
+
+def upload_main_display(image_path, frame=0):
+    """Upload a custom image (PNG/JPG/GIF) to the main 240×204 OLED display."""
+    img_bytes = image_to_rgb565(image_path, size=(MAIN_DISPLAY_W, MAIN_DISPLAY_H), frame=frame)
+    dev = usb.core.find(idVendor=VID, idProduct=PID)
+    if dev is None:
+        print("Keyboard nicht gefunden!", file=sys.stderr)
+        sys.exit(1)
+    _claim(dev)
+    try:
+        _upload_main_display_image(dev, img_bytes)
+    finally:
+        _release(dev)
+
+
+def upload_icon(button_idx, image_path, frame=0):
+    """Upload a custom image (PNG/JPG/GIF frame) to a numpad button display."""
+    img_bytes = image_to_rgb565(image_path, frame=frame)
     dev = usb.core.find(idVendor=VID, idProduct=PID)
     if dev is None:
         print("Keyboard nicht gefunden!", file=sys.stderr)
@@ -434,14 +570,11 @@ def _execute_obs_action(btn_cfg, obs_cfg, obs_holder):
     try:
         import obsws_python as obs
         if obs_holder[0] is None:
-            print(f"OBS: Verbinde mit {obs_cfg['host']}:{obs_cfg['port']}...", flush=True)
             obs_holder[0] = obs.ReqClient(
                 host=obs_cfg["host"], port=obs_cfg["port"],
                 password=obs_cfg.get("password", ""), timeout=3)
-            print("OBS: Verbunden!", flush=True)
         cl = obs_holder[0]
         if action_type == "scene":
-            print(f"OBS: Szene → {btn_cfg.get('scene', '')}", flush=True)
             cl.set_current_program_scene(btn_cfg.get("scene", ""))
         elif action_type == "record":
             cl.toggle_record()
@@ -457,23 +590,30 @@ def controller_loop(style=STYLE_ANALOG):
     if dev is None:
         print("Keyboard nicht gefunden!", file=sys.stderr)
         sys.exit(1)
-    _claim(dev)
+    for _attempt in range(10):
+        try:
+            _claim(dev)
+            break
+        except usb.core.USBError:
+            if _attempt < 9:
+                time.sleep(0.5)
+            else:
+                raise
     try:
         # Init
         dev.write(EP_OUT, make_packet(0x11, 0x12))
-        dev.read(EP_IN, PKT_SIZE, timeout=1000)
+        _read(dev)
         dev.write(EP_OUT, make_packet(0x11, 0x14))
-        dev.read(EP_IN, PKT_SIZE, timeout=1000)
+        _read(dev)
 
-        # Icons setzen und Aktionen aus Keyboard lesen
+        # Icons setzen und Original-BaseCamp-Aktionen deaktivieren
         buttons = read_buttons()
+        obs_cfg_init = _load_obs_config()
         for i, btn in enumerate(buttons):
             _set_icon(dev, i, btn["icon"])
-            # Gespeicherte Aktion aus Keyboard lesen (falls keine lokale Config)
-            if not btn.get("action", "").strip():
-                stored = _read_action(dev, i)
-                if stored:
-                    buttons[i]["action"] = stored
+            # Immer ":" in Flash schreiben: deaktiviert Original-BaseCamp-Befehle
+            # und stellt sicher dass byte42 korrekt gesetzt wird (byte42-Fix).
+            _write_action(dev, i, ":")
 
         last_time_sync = 0
         last_config_check = 0
@@ -572,14 +712,17 @@ def controller_loop(style=STYLE_ANALOG):
                 _smooth[k] = alpha * raw[k] + (1 - alpha) * _smooth[k]
 
             # Send keepalive + check buttons
-            dev.write(EP_OUT, make_packet(0x11, 0x14))
-            _handle_btn_resp(_read(dev, timeout=150))
-
-            # Send all metrics (keyboard shows whichever the wheel selects)
-            for metric_type in range(5):
-                value = min(int(_smooth[metric_type]), 999)
-                dev.write(EP_OUT, make_packet(0x11, 0x81, metric_type, 0x00, value))
+            try:
+                dev.write(EP_OUT, make_packet(0x11, 0x14))
                 _handle_btn_resp(_read(dev, timeout=150))
+
+                # Send all metrics (keyboard shows whichever the wheel selects)
+                for metric_type in range(5):
+                    value = min(int(_smooth[metric_type]), 999)
+                    dev.write(EP_OUT, make_packet(0x11, 0x81, metric_type, 0x00, value))
+                    _handle_btn_resp(_read(dev, timeout=150))
+            except usb.core.USBError:
+                pass  # Transient USB error — skip this cycle
 
             # Time sync once per minute
             if now - last_time_sync >= 60:
@@ -587,6 +730,8 @@ def controller_loop(style=STYLE_ANALOG):
                 last_time_sync = now
 
             time.sleep(CPU_INTERVAL)
+    except KeyboardInterrupt:
+        pass  # Normal termination via SIGINT
     finally:
         _release(dev)
 
@@ -599,8 +744,10 @@ if __name__ == "__main__":
     btn_idx = None
     variant = None
 
-    action_str = None
-    image_path = None
+    action_str        = None
+    image_path        = None
+    main_display_mode = "image"
+    gif_frame         = 0
     i = 0
     while i < len(args):
         a = args[i]
@@ -618,6 +765,17 @@ if __name__ == "__main__":
             btn_idx = int(args[i + 1])
             image_path = args[i + 2]
             i += 2
+        elif a == "upload-main" and i + 1 < len(args):
+            mode = "upload-main"
+            image_path = args[i + 1]
+            i += 1
+        elif a == "main-mode" and i + 1 < len(args):
+            mode = "main-mode"
+            main_display_mode = args[i + 1]  # "image" or "clock"
+            i += 1
+        elif a == "--frame" and i + 1 < len(args):
+            gif_frame = int(args[i + 1])
+            i += 1
         elif a == "action" and i + 1 < len(args):
             action_str = args[i + 1]
             i += 1
@@ -632,6 +790,10 @@ if __name__ == "__main__":
     elif mode == "icon":
         set_icon_once(btn_idx, variant, action=action_str)
     elif mode == "upload":
-        upload_icon(btn_idx, image_path)
+        upload_icon(btn_idx, image_path, frame=gif_frame)
+    elif mode == "upload-main":
+        upload_main_display(image_path, frame=gif_frame)
+    elif mode == "main-mode":
+        set_main_display_mode(main_display_mode, style)
     else:
         send_time(style)

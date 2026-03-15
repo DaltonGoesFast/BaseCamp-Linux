@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="gitlogo.png" alt="BaseCamp Linux" width="480"/>
+</p>
+
 # BaseCamp Linux
 
 **Unofficial Linux companion app for the Mountain Everest Max keyboard.**
@@ -8,6 +12,22 @@ Mountain Base Camp is only available on Windows — this project brings display 
 
 ---
 
+## Screenshot
+
+<p align="center">
+  <img src="gitgui.png" alt="BaseCamp Linux GUI" width="320"/>
+</p>
+
+The GUI is split into a persistent **dashboard** at the top and four collapsible sections below:
+
+- **Dashboard** — Live clock display with 24H/12H toggle, language switcher (DE/EN + custom), Analog/Digital display style, splash screen and autostart toggles
+- **Monitor Mode** — Start/stop live keyboard display with CPU%, GPU%, RAM%, HDD% and Network MB/s metrics
+- **Main Display** — Switch between image and clock mode, upload a custom 240×204 image to the keyboard's main display
+- **Numpad Keys** — Assign shell commands and custom 72×72 images (including GIF frame picker) to D1–D4
+- **OBS Integration** — Connect to OBS via WebSocket and trigger scene switches, recording or streaming from any D-button
+
+---
+
 ## Features
 
 - **Display styles** — Switch between Analog and Digital clock on the keyboard display
@@ -15,6 +35,7 @@ Mountain Base Camp is only available on Windows — this project brings display 
 - **Monitor mode** — Live metrics on the keyboard display: CPU%, GPU%, RAM%, HDD%, Network MB/s
 - **Button actions (D1–D4)** — Assign any shell command to the 4 numpad keys (open apps, scripts, etc.)
 - **Image upload (D1–D4)** — Upload custom 72×72 images to each button
+- **Main display upload** — Upload a custom 240×204 image to the keyboard's main display
 - **OBS integration** — Connect to OBS via WebSocket and trigger scene switches, recording or streaming from D1–D4
 - **System tray** — Minimize to tray, runs in the background
 - **Internationalization** — UI language switchable at runtime via external JSON files (DE + EN included, add your own)
@@ -24,7 +45,7 @@ Mountain Base Camp is only available on Windows — this project brings display 
 ## Requirements
 
 ```bash
-pip install pillow psutil obsws-python pystray
+pip install customtkinter pillow psutil obsws-python pystray
 ```
 
 > **GPU monitoring** requires `nvidia-smi` (NVIDIA only).
@@ -36,7 +57,7 @@ pip install pillow psutil obsws-python pystray
 ```bash
 git clone https://github.com/Ramisotti/BaseCamp-Linux.git
 cd BaseCamp-Linux
-pip install pillow psutil obsws-python pystray
+pip install customtkinter pillow psutil obsws-python pystray
 ```
 
 ### USB permissions (required, one-time)
@@ -44,9 +65,7 @@ pip install pillow psutil obsws-python pystray
 Without this the app can't talk to the keyboard without `sudo`:
 
 ```bash
-sudo tee /etc/udev/rules.d/99-mountain.rules <<EOF
-SUBSYSTEM=="usb", ATTRS{idVendor}=="3282", ATTRS{idProduct}=="0001", MODE="0666"
-EOF
+sudo cp 99-mountain-everest-max.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
@@ -61,6 +80,19 @@ python3 gui.py
 ```
 
 The GUI starts with a splash screen and auto-activates Monitor mode. The app minimizes to the system tray when closed.
+
+---
+
+## AppImage
+
+A self-contained AppImage is available in the releases. No Python installation required.
+
+```bash
+chmod +x BaseCamp-Linux-x86_64.AppImage
+./BaseCamp-Linux-x86_64.AppImage
+```
+
+USB permissions still need to be set up once (see above).
 
 ---
 

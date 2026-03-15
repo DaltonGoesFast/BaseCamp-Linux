@@ -26,7 +26,7 @@ def on_quit(icon, item):
     os.kill(main_pid, signal.SIGUSR2)
     icon.stop()
 
-img = Image.open(os.path.join(os.path.dirname(__file__), "logo.png")).resize((64, 64), Image.LANCZOS)
+img = Image.open(os.path.join(os.path.dirname(__file__), "resources", "app_icon_32.png"))
 menu = pystray.Menu(
     pystray.MenuItem(_open_label, on_open, default=True),
     pystray.MenuItem(_quit_label, on_quit),
