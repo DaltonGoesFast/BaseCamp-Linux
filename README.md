@@ -109,6 +109,16 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 ## Known Issues
 
+### Main display stuck on Mountain logo (rare)
+
+In rare cases the main display shows the original Mountain logo and cannot be overwritten with a new image — the upload appears to complete but the logo stays.
+
+**Cause:** The keyboard's internal flash controller gets into a stuck state.
+
+**Fix:** Boot into Windows and use the original Mountain Base Camp software to upload any image to the main display. This resets the flash controller. Afterwards BaseCamp Linux works normally again.
+
+---
+
 ### Clock mode after main display image upload
 
 After uploading an image to the main display, switching back to **Clock** mode does not work immediately — the keyboard ignores the mode switch command.
