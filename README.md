@@ -117,16 +117,24 @@ The GUI starts with a splash screen and auto-activates Monitor mode. The app min
 
 ---
 
-## AppImage
+## Installation
+
+### Arch / CachyOS / Manjaro — AUR
+
+```bash
+paru -S basecamp-linux
+```
+
+The udev rule is installed automatically. Just unplug and replug the keyboard after installation.
+
+### AppImage (Debian, Ubuntu, Mint, Fedora, Nobara)
 
 Self-contained AppImages are available in the [releases](../../releases). No Python installation required.
-
-Two builds are provided — pick the one for your distro:
 
 | File | Distro |
 |------|--------|
 | `BaseCamp-Linux-x86_64-debian.AppImage` | Debian, Ubuntu, Linux Mint |
-| `BaseCamp-Linux-x86_64-fedora.AppImage` | Fedora, Nobara, Arch, CachyOS, Manjaro |
+| `BaseCamp-Linux-x86_64-fedora.AppImage` | Fedora, Nobara |
 
 ```bash
 chmod +x BaseCamp-Linux-x86_64-*.AppImage
