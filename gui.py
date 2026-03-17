@@ -50,6 +50,8 @@ BUTTON_FILE     = os.path.join(CONFIG_DIR, "buttons.json")
 OBS_FILE        = os.path.join(CONFIG_DIR, "obs.json")
 OBS_BACKUP_FILE = os.path.join(CONFIG_DIR, "obs_backup.json")
 MAIN_MODE_FILE  = os.path.join(CONFIG_DIR, "main_display_mode")
+ZONE_FILE       = os.path.join(CONFIG_DIR, "zone_colors.json")
+RGB_FILE        = os.path.join(CONFIG_DIR, "rgb_settings.json")
 
 OBS_INTERNAL_ORDER = ["none", "scene", "record", "stream"]
 
@@ -237,6 +239,42 @@ def load_splash_enabled():
 def save_splash_enabled(val):
     with open(os.path.join(CONFIG_DIR, "splash"), "w") as f:
         f.write("1" if val else "0")
+
+
+def load_zone_config(defaults):
+    try:
+        import json as _json
+        data = _json.loads(open(ZONE_FILE).read())
+        colors = dict(defaults)
+        for k in colors:
+            if k in data and len(data[k]) == 3:
+                colors[k] = tuple(data[k])
+        brightness = int(data.get("brightness", 100))
+        return colors, brightness
+    except Exception:
+        return dict(defaults), 100
+
+
+def save_zone_config(colors, brightness):
+    import json as _json
+    data = {k: list(v) for k, v in colors.items()}
+    data["brightness"] = brightness
+    with open(ZONE_FILE, "w") as f:
+        f.write(_json.dumps(data, indent=2))
+
+
+def load_rgb_config():
+    try:
+        import json as _json
+        return _json.loads(open(RGB_FILE).read())
+    except Exception:
+        return {}
+
+
+def save_rgb_config(data):
+    import json as _json
+    with open(RGB_FILE, "w") as f:
+        f.write(_json.dumps(data, indent=2))
 
 
 # ── Accordion ─────────────────────────────────────────────────────────────────
@@ -521,6 +559,15 @@ class App(ctk.CTk):
             dropdown_hover_color=BG3)
         self._lang_combo.pack(side="left")
 
+        self._reg(
+            ctk.CTkButton(
+                fmt_row, text="", font=("Helvetica", 11, "bold"),
+                fg_color=RED, hover_color="#b91c1c", text_color=BG,
+                width=130, height=30,
+                command=self._reset_dial_image),
+            "dial_reset_btn"
+        ).pack(side="left", padx=(10, 0))
+
         # Analog/Digital row
         style_row = ctk.CTkFrame(dash, fg_color="transparent")
         style_row.pack(pady=(2, 2))
@@ -593,28 +640,35 @@ class App(ctk.CTk):
         try:
             _saved_mode = open(MAIN_MODE_FILE).read().strip()
         except FileNotFoundError:
-            _saved_mode = "image"
-        self._main_mode_clock = (_saved_mode == "clock")
+            _saved_mode = "clock"
+        self._main_mode = _saved_mode if _saved_mode in (
+            "image","clock","cpu","gpu","hd","network","ram","apm") else "clock"
+        self._main_just_uploaded = False
+        self._after_dial_reset = False
 
-        self._btn_main_image = ctk.CTkButton(
-            mode_row, text="", command=self._set_main_mode_image,
-            fg_color=BG3 if self._main_mode_clock else YLW,
-            text_color=FG2 if self._main_mode_clock else "#0d0d14",
-            hover_color="#d4a900", font=("Helvetica", 10, "bold"), height=32, width=90, corner_radius=6)
-        self._btn_main_image.pack(side="left", padx=3)
-        self._reg(self._btn_main_image, "main_mode_image")
+        _MODE_KEYS = ["image","clock","cpu","gpu","hd","network","ram","apm"]
+        _MODE_LANG  = ["main_mode_image","main_mode_clock","main_mode_cpu",
+                       "main_mode_gpu","main_mode_hd","main_mode_network",
+                       "main_mode_ram","main_mode_apm"]
+        self._mode_labels   = [self.T(k) for k in _MODE_LANG]
+        self._mode_key_map  = {lbl: key for key, lbl in zip(_MODE_KEYS, self._mode_labels)}
 
-        self._btn_main_clock = ctk.CTkButton(
-            mode_row, text="", command=self._set_main_mode_clock,
-            fg_color=YLW if self._main_mode_clock else BG3,
-            text_color="#0d0d14" if self._main_mode_clock else FG2,
-            hover_color=BG2, font=("Helvetica", 10, "bold"), height=32, width=90, corner_radius=6)
-        self._btn_main_clock.pack(side="left", padx=3)
-        self._reg(self._btn_main_clock, "main_mode_clock")
+        ctk.CTkLabel(mode_row, text="", font=("Helvetica", 11),
+                     text_color=FG2).pack(side="left", padx=(0, 6))
+        self._reg(ctk.CTkLabel(mode_row, text="", font=("Helvetica", 11),
+                               text_color=FG2), "main_mode_label").pack(side="left", padx=(0,6))
+        self._main_mode_var = tk.StringVar(value=self._mode_labels[_MODE_KEYS.index(self._main_mode)])
+        self._main_mode_menu = ctk.CTkOptionMenu(
+            mode_row, variable=self._main_mode_var,
+            values=self._mode_labels,
+            command=lambda lbl: self._set_main_mode(self._mode_key_map[lbl]),
+            fg_color=BG3, button_color=BG3, button_hover_color=BG2,
+            text_color=FG, font=("Helvetica", 11), width=160, height=32)
+        self._main_mode_menu.pack(side="left")
 
         self._reg(
             ctk.CTkButton(b2, text="", command=self._upload_main_image,
-                          fg_color=BLUE, text_color=BG, hover_color="#0884be",
+                          fg_color=BLUE, text_color=FG, hover_color="#0884be",
                           font=("Helvetica", 10, "bold"), height=34, corner_radius=6),
             "main_display_upload"
         ).pack(pady=4, padx=12, fill="x")
@@ -667,14 +721,14 @@ class App(ctk.CTk):
             idx = i
             ctk.CTkButton(row, text="✓", width=36, height=30,
                           command=lambda ix=idx: self._apply_btn(ix),
-                          fg_color=GRN, text_color=BG, hover_color="#18a348",
+                          fg_color=GRN, text_color=FG, hover_color="#18a348",
                           font=("Helvetica", 10, "bold"), corner_radius=4,
                           ).pack(side="left", padx=2)
 
             img_btn = self._reg(
                 ctk.CTkButton(row, text="", width=72, height=30,
                               command=lambda ix=idx: self._upload_image(ix),
-                              fg_color=BLUE, text_color=BG, hover_color="#0884be",
+                              fg_color=BLUE, text_color=FG, hover_color="#0884be",
                               font=("Helvetica", 11, "bold"), corner_radius=4,
                               border_width=0),
                 "image_btn"
@@ -693,7 +747,238 @@ class App(ctk.CTk):
                                           text_color=GRN)
         self._numpad_info.pack(pady=(4, 10))
 
-        # ── Section 4: OBS Integration ──
+        # ── RGB ──────────────────────────────────────────────────────────────
+        s5 = AccordionSection(scroll, self, "💡", "rgb_title")
+        self._sections.append(s5)
+        c = s5.content
+
+        # Effect selector
+        rgb_mode_row = ctk.CTkFrame(c, fg_color="transparent")
+        rgb_mode_row.pack(fill="x", padx=10, pady=(10, 2))
+        self._reg(
+            ctk.CTkLabel(rgb_mode_row, text="", font=("Helvetica", 11), text_color=FG2),
+            "rgb_mode_label"
+        ).pack(side="left", padx=(0, 6))
+
+        # (effect_id, has_speed, has_brightness, has_color1, has_color2, has_direction)
+        _RGB_EFFECTS = [
+            ("Static",             "static",           False, True,  True,  False, False),
+            ("Breathing",          "breathing",        True,  True,  True,  False, False),
+            ("Breathing Rainbow",  "breathing-rainbow",True,  True,  False, False, False),
+            ("Breathing Dual",     "breathing-dual",   True,  True,  True,  True,  False),
+            ("Wave",               "wave",             True,  True,  True,  False, True),
+            ("Wave Rainbow",       "wave-rainbow",     True,  True,  False, False, True),
+            ("Tornado",            "tornado",          True,  True,  True,  False, True),
+            ("Tornado Rainbow",    "tornado-rainbow",  True,  True,  False, False, True),
+            ("Reactive",           "reactive",         True,  True,  True,  True,  False),
+            ("Yeti",               "yeti",             True,  True,  True,  True,  False),
+            ("Matrix",             "matrix",           True,  True,  True,  True,  False),
+            ("Off",                "off",              False, False, False, False, False),
+        ]
+        self._rgb_effect_map = {name: (eid, hs, hb, hc1, hc2, hd)
+                                for name, eid, hs, hb, hc1, hc2, hd in _RGB_EFFECTS}
+        _rgb_names = [e[0] for e in _RGB_EFFECTS]
+        self._rgb_mode_var = tk.StringVar(value=_rgb_names[0])
+        self._rgb_mode_menu = ctk.CTkOptionMenu(
+            rgb_mode_row, variable=self._rgb_mode_var, values=_rgb_names,
+            command=lambda _: self._rgb_update_controls(),
+            fg_color=BG3, button_color=BG3, button_hover_color=BG2,
+            text_color=FG, font=("Helvetica", 11), width=180, height=32)
+        self._rgb_mode_menu.pack(side="left")
+
+        # Speed + Brightness sliders
+        def _labeled_slider(parent, label_key, from_=0, to=100, init=50):
+            row = ctk.CTkFrame(parent, fg_color="transparent")
+            row.pack(fill="x", padx=10, pady=2)
+            lbl = self._reg(ctk.CTkLabel(row, text="", text_color=FG2, font=("Helvetica", 11), width=120, anchor="w"), label_key)
+            lbl.pack(side="left")
+            val_lbl = ctk.CTkLabel(row, text=str(init), text_color=FG, font=("Helvetica", 11), width=30)
+            val_lbl.pack(side="right")
+            sl = ctk.CTkSlider(row, from_=from_, to=to, number_of_steps=to-from_,
+                               fg_color=BG3, progress_color=BLUE, button_color=BLUE,
+                               button_hover_color=BLUE, width=180, height=16)
+            sl.set(init)
+            sl.pack(side="left", padx=(0, 4))
+            sl.configure(command=lambda v, l=val_lbl: l.configure(text=str(int(v))))
+            return sl, row
+
+        self._rgb_speed_sl, self._rgb_speed_row = _labeled_slider(c, "rgb_speed_label", init=50)
+        self._rgb_bri_sl,   self._rgb_bri_row   = _labeled_slider(c, "rgb_brightness_label", init=100)
+
+        # Color pickers
+        color_row = ctk.CTkFrame(c, fg_color="transparent")
+        color_row.pack(fill="x", padx=10, pady=2)
+        self._rgb_color1 = (255, 0, 0)
+        self._rgb_color2 = (0, 0, 255)
+
+        self._reg(ctk.CTkLabel(color_row, text="", text_color=FG2, font=("Helvetica", 11)), "rgb_color1_label").pack(side="left", padx=(0, 4))
+        self._rgb_c1_btn = ctk.CTkButton(color_row, text="", width=40, height=28,
+                                          fg_color="#ff0000", hover_color="#ff0000", corner_radius=4,
+                                          command=lambda: self._pick_rgb_color(1))
+        self._rgb_c1_btn.pack(side="left", padx=(0, 12))
+
+        self._rgb_c2_lbl = self._reg(ctk.CTkLabel(color_row, text="", text_color=FG2, font=("Helvetica", 11)), "rgb_color2_label")
+        self._rgb_c2_lbl.pack(side="left", padx=(0, 4))
+        self._rgb_c2_btn = ctk.CTkButton(color_row, text="", width=40, height=28,
+                                          fg_color="#0000ff", hover_color="#0000ff", corner_radius=4,
+                                          command=lambda: self._pick_rgb_color(2))
+        self._rgb_c2_btn.pack(side="left")
+
+        # Direction
+        dir_row = ctk.CTkFrame(c, fg_color="transparent")
+        dir_row.pack(fill="x", padx=10, pady=2)
+        self._rgb_dir_row = dir_row
+        self._reg(ctk.CTkLabel(dir_row, text="", text_color=FG2, font=("Helvetica", 11)), "rgb_direction_label").pack(side="left", padx=(0, 6))
+        self._dir_wave    = ["→ L→R", "↓ T→B", "← R→L", "↑ B→T"]
+        self._dir_tornado = ["↻ CW", "↺ CCW"]
+        self._rgb_dir_val_map = {"→ L→R": 0, "↓ T→B": 2, "← R→L": 4, "↑ B→T": 6,
+                                 "↻ CW": 9, "↺ CCW": 10}
+        self._rgb_dir_var = tk.StringVar(value=self._dir_wave[0])
+        self._rgb_dir_menu = ctk.CTkOptionMenu(
+            dir_row, variable=self._rgb_dir_var, values=self._dir_wave,
+            fg_color=BG3, button_color=BG3, button_hover_color=BG2,
+            text_color=FG, font=("Helvetica", 11), width=120, height=28)
+        self._rgb_dir_menu.pack(side="left")
+
+        # Load saved RGB settings
+        _rgb_saved = load_rgb_config()
+        if _rgb_saved.get("effect") in self._rgb_effect_map:
+            self._rgb_mode_var.set(_rgb_saved["effect"])
+        if "speed" in _rgb_saved:
+            self._rgb_speed_sl.set(_rgb_saved["speed"])
+        if "brightness" in _rgb_saved:
+            self._rgb_bri_sl.set(_rgb_saved["brightness"])
+        if "color1" in _rgb_saved and len(_rgb_saved["color1"]) == 3:
+            self._rgb_color1 = tuple(_rgb_saved["color1"])
+            _c1h = "#{:02x}{:02x}{:02x}".format(*self._rgb_color1)
+            self._rgb_c1_btn.configure(fg_color=_c1h, hover_color=_c1h)
+        if "color2" in _rgb_saved and len(_rgb_saved["color2"]) == 3:
+            self._rgb_color2 = tuple(_rgb_saved["color2"])
+            _c2h = "#{:02x}{:02x}{:02x}".format(*self._rgb_color2)
+            self._rgb_c2_btn.configure(fg_color=_c2h, hover_color=_c2h)
+        if "direction" in _rgb_saved and _rgb_saved["direction"] in self._rgb_dir_val_map:
+            self._rgb_dir_var.set(_rgb_saved["direction"])
+        self._rgb_update_controls()
+
+        # Apply button + status
+        rgb_apply_row = ctk.CTkFrame(c, fg_color="transparent")
+        self._rgb_apply_row = rgb_apply_row
+        rgb_apply_row.pack(fill="x", padx=10, pady=(6, 10))
+        self._reg(
+            ctk.CTkButton(rgb_apply_row, text="", font=("Helvetica", 11),
+                          fg_color=BLUE, hover_color="#0284c7", text_color=FG,
+                          width=120, height=32, command=self._apply_rgb),
+            "rgb_apply"
+        ).pack(side="left")
+        self._rgb_status = ctk.CTkLabel(rgb_apply_row, text="", text_color=FG2, font=("Helvetica", 11))
+        self._rgb_status.pack(side="left", padx=(10, 0))
+
+        self._rgb_section = s5
+        self._rgb_update_controls()
+
+        # ── Section 6: Zones & Side Ring ─────────────────────────────────────
+        s6 = AccordionSection(scroll, self, "🎨", "zone_title")
+        self._sections.append(s6)
+        c6 = s6.content
+
+        _ZONE_DEFS = [
+            ("fn",     "zone_fn",     (220,  60,  60)),
+            ("num",    "zone_num",    (255, 140,   0)),
+            ("qwerty", "zone_qwerty", (200, 200,  50)),
+            ("home",   "zone_home",   ( 60, 200,  60)),
+            ("shift",  "zone_shift",  ( 60, 120, 255)),
+            ("bottom", "zone_bottom", (160,  60, 240)),
+            ("numpad", "zone_numpad", ( 60, 210, 210)),
+        ]
+        # zone_key -> (r,g,b)
+        _zone_defaults_raw = {z[0]: z[2] for z in _ZONE_DEFS}
+        _zone_defaults_raw["side"] = (255, 255, 255)
+        self._zone_defaults = dict(_zone_defaults_raw)
+        self._zone_colors, _saved_bri = load_zone_config(_zone_defaults_raw)
+        self._zone_btns = {}
+
+        def _hex(rgb):
+            return "#{:02x}{:02x}{:02x}".format(*rgb)
+
+        # Zone rows
+        zones_frame = ctk.CTkFrame(c6, fg_color=BG3, corner_radius=4)
+        zones_frame.pack(fill="x", padx=10, pady=(10, 4))
+
+        for zone_key, lang_key, _ in _ZONE_DEFS:
+            init_hex = _hex(self._zone_colors[zone_key])
+            row = ctk.CTkFrame(zones_frame, fg_color="transparent")
+            row.pack(fill="x", padx=6, pady=2)
+            self._reg(
+                ctk.CTkLabel(row, text="", text_color=FG2, font=("Helvetica", 11),
+                             width=150, anchor="w"),
+                lang_key
+            ).pack(side="left")
+            btn = ctk.CTkButton(
+                row, text="", width=44, height=26, corner_radius=4,
+                fg_color=init_hex, hover_color=init_hex,
+                command=lambda k=zone_key: self._pick_zone_color(k))
+            btn.pack(side="left")
+            self._zone_btns[zone_key] = btn
+
+        # Divider
+        ctk.CTkFrame(c6, fg_color=BG3, height=1).pack(fill="x", padx=10, pady=4)
+
+        # Side ring row
+        side_row = ctk.CTkFrame(c6, fg_color="transparent")
+        side_row.pack(fill="x", padx=10, pady=2)
+        self._reg(
+            ctk.CTkLabel(side_row, text="", text_color=FG2, font=("Helvetica", 11),
+                         width=150, anchor="w"),
+            "zone_side"
+        ).pack(side="left")
+        side_init = _hex(self._zone_colors["side"])
+        self._zone_btns["side"] = ctk.CTkButton(
+            side_row, text="", width=44, height=26, corner_radius=4,
+            fg_color=side_init, hover_color=side_init,
+            command=lambda: self._pick_zone_color("side"))
+        self._zone_btns["side"].pack(side="left")
+
+        # Brightness slider
+        bri_row = ctk.CTkFrame(c6, fg_color="transparent")
+        bri_row.pack(fill="x", padx=10, pady=(6, 2))
+        self._reg(
+            ctk.CTkLabel(bri_row, text="", text_color=FG2, font=("Helvetica", 11),
+                         width=150, anchor="w"),
+            "zone_brightness"
+        ).pack(side="left")
+        self._zone_bri_val = ctk.CTkLabel(bri_row, text="100", text_color=FG,
+                                          font=("Helvetica", 11), width=30)
+        self._zone_bri_val.pack(side="right")
+        self._zone_bri_sl = ctk.CTkSlider(
+            bri_row, from_=10, to=100, number_of_steps=90,
+            fg_color=BG3, progress_color=BLUE, button_color=BLUE,
+            button_hover_color=BLUE, width=160, height=16)
+        self._zone_bri_sl.set(_saved_bri)
+        self._zone_bri_val.configure(text=str(_saved_bri))
+        self._zone_bri_sl.pack(side="left", padx=(0, 4))
+        self._zone_bri_sl.configure(
+            command=lambda v: self._zone_bri_val.configure(text=str(int(v))))
+
+        # Apply + Reset buttons + status
+        zone_apply_row = ctk.CTkFrame(c6, fg_color="transparent")
+        zone_apply_row.pack(fill="x", padx=10, pady=(6, 12))
+        self._reg(
+            ctk.CTkButton(zone_apply_row, text="", font=("Helvetica", 11),
+                          fg_color=BLUE, hover_color="#0284c7", text_color=FG,
+                          width=120, height=32, command=self._apply_zones),
+            "zone_apply"
+        ).pack(side="left")
+        self._reg(
+            ctk.CTkButton(zone_apply_row, text="", font=("Helvetica", 11, "bold"),
+                          fg_color=RED, hover_color="#c03030", text_color=BG,
+                          width=80, height=32, command=self._reset_zones),
+            "zone_reset"
+        ).pack(side="left", padx=(6, 0))
+        self._zone_status = ctk.CTkLabel(zone_apply_row, text="", text_color=FG2,
+                                         font=("Helvetica", 11))
+        self._zone_status.pack(side="left", padx=(10, 0))
+
+        # ── Section 5 (moved): OBS Integration ───────────────────────────────
         s4 = AccordionSection(scroll, self, "📡", "obs_title")
         self._sections.append(s4)
         b4 = s4.content
@@ -728,14 +1013,14 @@ class App(ctk.CTk):
         obs_btn_row.pack(pady=(6, 8))
         self._reg(
             ctk.CTkButton(obs_btn_row, text="", command=self._obs_connect,
-                          fg_color=BLUE, text_color=BG, hover_color="#0884be",
+                          fg_color=BLUE, text_color=FG, hover_color="#0884be",
                           font=("Helvetica", 11, "bold"), height=34, corner_radius=6),
             "obs_connect"
         ).pack(side="left")
         self._reg(
             ctk.CTkButton(obs_btn_row, text="", command=self._obs_disconnect,
-                          fg_color=BG2, text_color=FG2, hover_color=BG3,
-                          font=("Helvetica", 11), height=34, corner_radius=6),
+                          fg_color=RED, text_color=BG, hover_color="#c03030",
+                          font=("Helvetica", 11, "bold"), height=34, corner_radius=6),
             "obs_disconnect"
         ).pack(side="left", padx=(6, 0))
 
@@ -783,7 +1068,7 @@ class App(ctk.CTk):
 
             ctk.CTkButton(row, text="✓", width=36, height=30,
                           command=lambda ix=idx: self._obs_save_btn(ix),
-                          fg_color=GRN, text_color=BG, hover_color="#18a348",
+                          fg_color=GRN, text_color=FG, hover_color="#18a348",
                           font=("Helvetica", 10, "bold"), corner_radius=4,
                           ).pack(side="left", padx=4)
 
@@ -813,6 +1098,150 @@ class App(ctk.CTk):
         _c.yview = _capped_yview
 
     # ── Logic ─────────────────────────────────────────────────────────────────
+
+    def _rgb_update_controls(self):
+        name = self._rgb_mode_var.get()
+        _, hs, hb, hc1, hc2, hd = self._rgb_effect_map.get(name, ("", False,False,False,False,False))
+        state_speed = "normal" if hs else "disabled"
+        state_bri   = "normal" if hb else "disabled"
+        state_c1    = "normal" if hc1 else "disabled"
+        state_c2    = "normal" if hc2 else "disabled"
+        self._rgb_speed_sl.configure(state=state_speed)
+        self._rgb_bri_sl.configure(state=state_bri)
+        self._rgb_c1_btn.configure(state=state_c1)
+        self._rgb_c2_btn.configure(state=state_c2)
+        self._rgb_c2_lbl.configure(text_color=FG2 if hc2 else BG3)
+        # direction row: show/hide + update options based on effect type
+        was_visible = self._rgb_dir_row.winfo_ismapped()
+        if hd:
+            is_tornado = "tornado" in self._rgb_effect_map.get(name, ("",))[0]
+            new_opts = self._dir_tornado if is_tornado else self._dir_wave
+            cur = self._rgb_dir_var.get()
+            if cur not in new_opts:
+                self._rgb_dir_var.set(new_opts[0])
+            self._rgb_dir_menu.configure(values=new_opts)
+            if not was_visible:
+                self._rgb_dir_row.pack(fill="x", padx=10, pady=2,
+                                       before=self._rgb_apply_row)
+        else:
+            if was_visible:
+                self._rgb_dir_row.pack_forget()
+        # Remeasure section so accordion height adjusts
+        if hasattr(self, "_rgb_section"):
+            self.update_idletasks()
+            s = self._rgb_section
+            was_open = s._open
+            s.measure()
+            if was_open:
+                s._content.configure(height=s._natural_h)
+
+    def _pick_rgb_color(self, which):
+        import tkinter.colorchooser as _cc
+        initial = self._rgb_color1 if which == 1 else self._rgb_color2
+        init_hex = "#{:02x}{:02x}{:02x}".format(*initial)
+        result = _cc.askcolor(color=init_hex, title="Farbe wählen")
+        if result[0] is None:
+            return
+        rgb = tuple(int(v) for v in result[0])
+        hex_color = "#{:02x}{:02x}{:02x}".format(*rgb)
+        if which == 1:
+            self._rgb_color1 = rgb
+            self._rgb_c1_btn.configure(fg_color=hex_color, hover_color=hex_color)
+        else:
+            self._rgb_color2 = rgb
+            self._rgb_c2_btn.configure(fg_color=hex_color, hover_color=hex_color)
+
+    def _apply_rgb(self):
+        name = self._rgb_mode_var.get()
+        eid, hs, hb, hc1, hc2, hd = self._rgb_effect_map[name]
+        speed = int(self._rgb_speed_sl.get())
+        bri   = int(self._rgb_bri_sl.get())
+        r1,g1,b1 = self._rgb_color1
+        r2,g2,b2 = self._rgb_color2
+        c1_hex = f"{r1:02x}{g1:02x}{b1:02x}"
+        c2_hex = f"{r2:02x}{g2:02x}{b2:02x}"
+        direction = self._rgb_dir_val_map.get(self._rgb_dir_var.get(), 0)
+        self._rgb_status.configure(text=self.T("rgb_applying"), text_color=YLW)
+        was_running = self._cpu_proc and self._cpu_proc.poll() is None
+        if was_running:
+            self._cpu_proc.terminate()
+            self._cpu_proc.wait()
+            self._cpu_proc = None
+        def run():
+            r = subprocess.run(
+                _cmd("rgb", eid, str(speed), str(bri), c1_hex, c2_hex, str(direction)),
+                capture_output=True)
+            ok = r.returncode == 0
+            err = (r.stderr.decode(errors="replace").strip().splitlines() or [""])[-1]
+            if ok:
+                save_rgb_config({
+                    "effect": name,
+                    "speed": speed,
+                    "brightness": bri,
+                    "color1": list(self._rgb_color1),
+                    "color2": list(self._rgb_color2),
+                    "direction": self._rgb_dir_var.get(),
+                })
+            def finish():
+                self._rgb_status.configure(
+                    text=self.T("rgb_applied") if ok else f"{self.T('rgb_error')} — {err}",
+                    text_color=GRN if ok else RED)
+                if was_running:
+                    self._start_cpu_auto()
+            self.after(0, finish)
+        threading.Thread(target=run, daemon=True).start()
+
+    def _pick_zone_color(self, zone_key):
+        import tkinter.colorchooser as _cc
+        init_hex = "#{:02x}{:02x}{:02x}".format(*self._zone_colors.get(zone_key, (0, 0, 0)))
+        result = _cc.askcolor(color=init_hex, title="Farbe wählen")
+        if result[0] is None:
+            return
+        rgb = tuple(int(v) for v in result[0])
+        self._zone_colors[zone_key] = rgb
+        hex_color = "#{:02x}{:02x}{:02x}".format(*rgb)
+        self._zone_btns[zone_key].configure(fg_color=hex_color, hover_color=hex_color)
+
+    def _reset_zones(self):
+        self._zone_colors = dict(self._zone_defaults)
+        for k, rgb in self._zone_colors.items():
+            hex_color = "#{:02x}{:02x}{:02x}".format(*rgb)
+            if k in self._zone_btns:
+                self._zone_btns[k].configure(fg_color=hex_color, hover_color=hex_color)
+        self._zone_status.configure(text="", text_color=FG2)
+
+    def _apply_zones(self):
+        self._zone_status.configure(text=self.T("zone_applying"), text_color=YLW)
+        was_running = self._cpu_proc and self._cpu_proc.poll() is None
+        if was_running:
+            self._cpu_proc.terminate()
+            self._cpu_proc.wait()
+            self._cpu_proc = None
+        brightness = int(self._zone_bri_sl.get())
+        tokens = []
+        for k, rgb in self._zone_colors.items():
+            tokens.append(f"{k}:{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}")
+        tokens.append(f"brightness:{brightness}")
+        def run():
+            result = subprocess.run(_cmd("custom-rgb", *tokens), capture_output=True)
+            ok = result.returncode == 0
+            err = (result.stderr.decode(errors="replace").strip().splitlines() or [""])[-1]
+            if ok:
+                save_zone_config(self._zone_colors, brightness)
+            def finish():
+                self._zone_status.configure(
+                    text=self.T("zone_applied") if ok else f"{self.T('zone_error')} — {err}",
+                    text_color=GRN if ok else RED)
+                if was_running:
+                    self._start_cpu_auto()
+            self.after(0, finish)
+        threading.Thread(target=run, daemon=True).start()
+
+    def _reset_dial_image(self):
+        def run():
+            subprocess.run(_cmd("reset-dial"), capture_output=True)
+            self.after(0, lambda: setattr(self, "_after_dial_reset", True))
+        threading.Thread(target=run, daemon=True).start()
 
     def _on_format_change(self):
         with open(os.path.join(CONFIG_DIR, "clock_format"), "w") as f:
@@ -913,7 +1342,8 @@ class App(ctk.CTk):
                     _cmd("cpu", style_arg),
                     stdout=subprocess.DEVNULL, stderr=_stderr_log)
                 self._btn_cpu.configure(text=self.T("monitor_stop"),
-                                        fg_color=RED, text_color=FG)
+                                        fg_color=RED, text_color=BG,
+                                        font=("Helvetica", 11, "bold"))
                 self._cpu_status.configure(text=self.T("monitor_running"), text_color=GRN)
             except Exception as e:
                 self._cpu_status.configure(text=f"Fehler: {e}", text_color=RED)
@@ -1070,11 +1500,11 @@ class App(ctk.CTk):
             dlg.destroy()
 
         ctk.CTkButton(btn_row, text="OK", command=_ok,
-                      fg_color=BLUE, text_color=BG, hover_color="#0884be",
+                      fg_color=BLUE, text_color=FG, hover_color="#0884be",
                       font=("Helvetica", 11, "bold"), height=30, width=70,
                       corner_radius=6).pack(side="left", padx=4)
         ctk.CTkButton(btn_row, text=self.T("gif_frame_cancel"), command=_cancel,
-                      fg_color=BG3, text_color=FG2, hover_color=BG2,
+                      fg_color=BG3, text_color=FG, hover_color=BG2,
                       font=("Helvetica", 11), height=30, width=70,
                       corner_radius=6).pack(side="left")
 
@@ -1141,45 +1571,41 @@ class App(ctk.CTk):
 
         threading.Thread(target=do_upload, daemon=True).start()
 
-    def _set_main_mode_image(self):
-        self._main_mode_clock = False
+    def _set_main_mode(self, mode):
+        """Switch main display to any supported mode and persist the choice."""
+        self._main_mode = mode
         with open(MAIN_MODE_FILE, "w") as f:
-            f.write("image")
-        self._btn_main_image.configure(fg_color=YLW, text_color="#0d0d14")
-        self._btn_main_clock.configure(fg_color=BG3, text_color=FG2)
-        was_running = self._cpu_proc and self._cpu_proc.poll() is None
-        if was_running:
-            self._cpu_proc.terminate()
-            self._cpu_proc.wait()
-            self._cpu_proc = None
+            f.write(mode)
         self._main_status.configure(text="", text_color=FG2)
 
-        def run():
-            subprocess.run(_cmd("main-mode", "image"), capture_output=True)
-        threading.Thread(target=run, daemon=True).start()
-
-    def _set_main_mode_clock(self):
-        self._main_mode_clock = True
-        with open(MAIN_MODE_FILE, "w") as f:
-            f.write("clock")
-        self._btn_main_clock.configure(fg_color=YLW, text_color="#0d0d14")
-        self._btn_main_image.configure(fg_color=BG3, text_color=FG2)
-        self._main_status.configure(text="", text_color=FG2)
         was_running = self._cpu_proc and self._cpu_proc.poll() is None
         if was_running:
             self._cpu_proc.terminate()
             self._cpu_proc.wait()
             self._cpu_proc = None
 
+        just_uploaded = self._main_just_uploaded
+        self._main_just_uploaded = False
+        needs_monitor = (mode != "image")
+
         def run():
-            time.sleep(0.8 if was_running else 0.5)
-            # Kill any orphaned controller processes from previous sessions
+            delay = 2.0 if just_uploaded else 0.8 if was_running else 0.5
+            if just_uploaded:
+                self.after(0, lambda: self._main_status.configure(
+                    text="Warte auf Tastatur…", text_color=YLW))
+            time.sleep(delay)
             pkill = "basecamp-controller.*cpu" if _FROZEN else r"mountain-time-sync\.py.*cpu"
             subprocess.run(["pkill", "-f", pkill], capture_output=True)
-            time.sleep(0.5)
-            subprocess.run(_cmd("main-mode", "clock"), capture_output=True)
             time.sleep(0.3)
-            self.after(0, self._start_cpu_auto)
+            r = subprocess.run(_cmd("main-mode", mode), capture_output=True)
+            if r.returncode != 0:
+                err = (r.stderr.decode(errors="replace").strip().splitlines() or [""])[-1]
+                self.after(0, lambda: self._main_status.configure(
+                    text=f"{mode}: {err or 'error'}", text_color=RED))
+                return
+            if needs_monitor:
+                time.sleep(0.3)
+                self.after(0, self._start_cpu_auto)
         threading.Thread(target=run, daemon=True).start()
 
     def _upload_main_image(self):
@@ -1209,21 +1635,20 @@ class App(ctk.CTk):
             self._cpu_proc.wait()
             self._cpu_proc = None
 
-        need_mode_switch = self._main_mode_clock
+        need_mode_switch = (self._main_mode != "image")
+        after_reset = self._after_dial_reset
+        self._after_dial_reset = False
 
         def do_upload():
             time.sleep(2.5 if was_running else 0.5)
-            if need_mode_switch:
-                self.after(0, lambda: (
-                    self._btn_main_image.configure(fg_color=YLW, text_color="#0d0d14"),
-                    self._btn_main_clock.configure(fg_color=BG3, text_color=FG2),
-                ))
-                self._main_mode_clock = False
+            if need_mode_switch and not after_reset:
+                self._main_mode = "image"
                 subprocess.run(_cmd("main-mode", "image"), capture_output=True)
                 time.sleep(0.3)
-            cmd = _cmd("upload-main", path)
-            if gif_frame:
-                cmd = _cmd("upload-main", path, "--frame", str(gif_frame))
+            extras = ["--frame", str(gif_frame)] if gif_frame else []
+            if after_reset:
+                extras.append("--activate-custom")
+            cmd = _cmd("upload-main", path, *extras)
             ok = False
             err_hint = ""
             for attempt in range(3):
@@ -1241,6 +1666,8 @@ class App(ctk.CTk):
                             self.after(0, lambda v=pct: self._main_bar.set(v / 100.0))
                         except ValueError:
                             pass
+                    else:
+                        print(line, end="", flush=True)
                 proc.wait()
                 ok = proc.returncode == 0
                 err_hint = (proc.stderr.read().strip().splitlines() or [""])[-1]
@@ -1255,10 +1682,9 @@ class App(ctk.CTk):
                           else self.T("main_display_error")),
                     text_color=GRN if ok else RED)
                 if ok:
-                    # Modus-Buttons auf "Bild" setzen — Controller bleibt gestoppt
-                    # damit die Uhr das Bild nicht überschreibt
-                    self._btn_main_image.configure(fg_color=YLW, text_color="#0d0d14")
-                    self._btn_main_clock.configure(fg_color=BG3, text_color=FG2)
+                    self._main_mode = "image"
+                    self._main_mode_var.set(self._mode_labels[0])  # "Bild" / "Image"
+                    self._main_just_uploaded = True
             self.after(0, finish)
 
         threading.Thread(target=do_upload, daemon=True).start()

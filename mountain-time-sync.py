@@ -271,25 +271,19 @@ def _upload_icon_image(dev, button_idx, img_bytes):
         except usb.core.USBTimeoutError:
             pass
 
-def _upload_main_display_image(dev, img_bytes):
+def _upload_main_display_image(dev, img_bytes, activate=False):
     """Upload a 240×204 RGB565 LE image to the main display.
 
-    Protocol (reverse-engineered from capture_main_display.pcap):
-      11 14 keepalive (no 11 12!) → 21 03 session open → 22 00 slot prepare →
-      descriptor (send, if fb resend once) → chunk stream (fb=retry, fa=advance) →
-      11 14 mode switch (b10=0x01) → 13 41 00 00 01 activate
+    Protocol: 21 03 session → 22 00 slot → descriptor → chunk stream.
+    No mode switch here — the GUI sends 'main-mode image' before calling
+    this, which handles the mode switch + its EP_IN freeze. By the time
+    the chunks finish (~50s), the freeze is already over.
+    Image appears automatically after chunks commit (per protocol doc §6.6).
+
+    activate=True: after chunks, send 13 41 00 00 00 to explicitly activate
+    the custom image slot (needed after 13 41 00 00 01 dial-reset).
     """
     assert len(img_bytes) == MAIN_IMG_SIZE, f"Expected {MAIN_IMG_SIZE} bytes, got {len(img_bytes)}"
-
-    # 11 14 keepalive to read dev_bytes for mode switch later (no 11 12 — main display
-    # upload uses only ctrl_transfer; 11 12 interferes with the flash controller state)
-    dev_info = bytearray(PKT_SIZE)
-    dev.write(EP_OUT, make_packet(0x11, 0x14))
-    try:
-        resp = bytearray(dev.read(EP_IN, PKT_SIZE, timeout=500))
-        if any(resp[7:10]):
-            dev_info = resp
-    except Exception: pass
     print("PROGRESS:5", flush=True)
 
     # Session open → slot prepare
@@ -298,15 +292,16 @@ def _upload_main_display_image(dev, img_bytes):
     _ctrl_set_report(dev, bytes([0xaa, 0x55, 0x22, 0x00]))
     _ctrl_get_report(dev)
 
-    # Descriptor: send once, poll 130ms; if fb resend (capture: 2 sends → fb → fa)
-    desc = bytes([0xaa, 0x55, 0x10, 0x80, 0x7e, 0x01, 0xec, 0x46, 0x00, 0x00, 0x02, 0x01, 0x00])
+    # Descriptor: compute actual checksum (sum of all bytes, 16-bit LE)
+    chk = sum(img_bytes) & 0xFFFF
+    desc = bytes([0xaa, 0x55, 0x10, 0x80, 0x7e, 0x01, chk & 0xFF, chk >> 8, 0x00, 0x00, 0x02, 0x01, 0x00])
     _ctrl_set_report(dev, desc)
     for _ in range(5):
         time.sleep(0.130)
         r = _ctrl_get_report(dev)
         if r[2:4] == bytes([0x10, 0xfa]):
             break
-        _ctrl_set_report(dev, desc)  # fb: resend (matches capture)
+        _ctrl_set_report(dev, desc)
     else:
         raise RuntimeError("Main display descriptor never became ready (fa)")
     print("PROGRESS:10", flush=True)
@@ -329,21 +324,6 @@ def _upload_main_display_image(dev, img_bytes):
                 break
         # fb: retry same chunk (don't advance)
 
-    # Mode switch + activate within the same session (from capture_main_display.pcap)
-    dev_bytes = bytes(dev_info[7:10]) if any(dev_info[7:10]) else bytes([0xf3, 0xcc, 0x23])
-    mode_pkt = make_packet(
-        0x11, 0x14, 0x00, 0x01, 0x02, 0xff, 0x00,
-        dev_bytes[0], dev_bytes[1], dev_bytes[2],
-        0x01, 0x1e, 0x00, 0x1e, 0x00, 0x01,
-        0x12, 0x13, 0x14, 0x15, 0x02, 0x00, 0x32, 0x00)
-    dev.write(EP_OUT, mode_pkt)
-    try: dev.read(EP_IN, PKT_SIZE, timeout=1000)
-    except Exception: pass
-    time.sleep(0.050)
-
-    dev.write(EP_OUT, make_packet(0x13, 0x41, 0x00, 0x00, 0x01))
-    try: dev.read(EP_IN, PKT_SIZE, timeout=2000)
-    except Exception: pass
 
 
 def image_to_rgb565(image_path, size=(72, 72), frame=0):
@@ -430,32 +410,67 @@ def send_time(style=STYLE_ANALOG):
     if dev is None:
         print("Keyboard nicht gefunden!", file=sys.stderr)
         sys.exit(1)
-    _claim(dev)
+    for _attempt in range(20):
+        try:
+            _claim(dev)
+            break
+        except usb.core.USBError:
+            if _attempt < 19:
+                time.sleep(1.0)
+            else:
+                raise
     try:
         for _ in range(3):
             dev.write(EP_OUT, make_packet(0x11, 0x14))
-            dev.read(EP_IN, PKT_SIZE, timeout=1000)
+            try: dev.read(EP_IN, PKT_SIZE, timeout=1000)
+            except Exception: pass
         _send_time_packet(dev, style)
     finally:
         _release(dev)
 
-def set_main_display_mode(mode, style=STYLE_ANALOG):
-    """Switch the main display between 'image' and 'clock' mode.
+MAIN_DISPLAY_MODES = {
+    # mode name → menu byte (base value | 0x01 for screensaver timeout)
+    "image":   0x01,
+    "clock":   0x11,
+    "cpu":     0x91,
+    "gpu":     0xA1,
+    "hd":      0xB1,
+    "network": 0xC1,
+    "ram":     0xD1,
+    "apm":     0xE1,
+}
 
-    Protocol from capture_main_clock_switch.pcap:
-      Send 11 14 00 01 02 ff 00 [dev_bytes_7-9] [b10] 1e 00 1e 00 01 12 13 14 15 02 00 32 00...
-      b10=0x11 → clock active, b10=0x01 → image active
-      dev_bytes_7-9 are device-specific, read from keyboard's own 11 14 response.
+def set_main_display_mode(mode, style=STYLE_ANALOG):
+    """Switch the main display mode (image, clock, cpu, gpu, hd, network, ram, apm).
+
+    Protocol: Send 11 14 write packet with menu byte (b10) set to the
+    mode value from MAIN_DISPLAY_MODES.
     """
     dev = usb.core.find(idVendor=VID, idProduct=PID)
     if dev is None:
         print("Keyboard nicht gefunden!", file=sys.stderr)
         sys.exit(1)
-    _claim(dev)
+    # Retry claim up to 60s — kernel may auto-rebind HID driver during post-upload
+    # flash write freeze (~32s) or after mode-switch EP_IN freeze (~32s)
+    for _attempt in range(60):
+        try:
+            _claim(dev)
+            break
+        except usb.core.USBError:
+            if _attempt < 59:
+                time.sleep(1.0)
+            else:
+                raise
     try:
-        # Send keepalives to wake up keyboard before mode switch
-        # (required after upload or idle — keyboard ignores mode switch without prior keepalives)
-        for _ in range(5):
+        # 11 12 re-init: resets keyboard state after kernel HID driver init packets
+        # (safe after upload is fully done — prohibited only before/during upload)
+        dev.write(EP_OUT, make_packet(0x11, 0x12))
+        try: dev.read(EP_IN, PKT_SIZE, timeout=500)
+        except Exception: pass
+        time.sleep(0.1)
+
+        # Send keepalives to stabilise before mode switch
+        for _ in range(3):
             dev.write(EP_OUT, make_packet(0x11, 0x14))
             try: dev.read(EP_IN, PKT_SIZE, timeout=300)
             except Exception: pass
@@ -471,7 +486,7 @@ def set_main_display_mode(mode, style=STYLE_ANALOG):
         dev_bytes = bytes(info[7:10]) if any(info[7:10]) else bytes([0xf3, 0xcc, 0x23])
 
         # Build mode-switch packet
-        b10 = 0x11 if mode == "clock" else 0x01
+        b10 = MAIN_DISPLAY_MODES.get(mode, 0x11)
         pkt = bytearray(PKT_SIZE)
         pkt[0]     = 0x11
         pkt[1]     = 0x14
@@ -491,16 +506,183 @@ def set_main_display_mode(mode, style=STYLE_ANALOG):
         try: dev.read(EP_IN, PKT_SIZE, timeout=500)
         except Exception: pass
 
-        # When switching to image mode, also activate the committed image data
-        if mode == "image":
-            dev.write(EP_OUT, make_packet(0x13, 0x41, 0x00, 0x00, 0x01))
-            try: dev.read(EP_IN, PKT_SIZE, timeout=2000)
-            except Exception: pass
+        # Note: 0x13 0x41 0x00 0x00 0x01 is NOT an activation command —
+        # it resets the dial to the factory Mountain logo. Do NOT send it here.
     finally:
         _release(dev)
 
 
-def upload_main_display(image_path, frame=0):
+def set_rgb(effect, speed=50, brightness=100, color1=(255, 0, 0), color2=(0, 0, 255), direction=0):
+    """Set keyboard RGB lighting effect via 0x14 0x2c command."""
+    dev = usb.core.find(idVendor=VID, idProduct=PID)
+    if dev is None:
+        print("Keyboard nicht gefunden!", file=sys.stderr)
+        sys.exit(1)
+    for _attempt in range(5):
+        try:
+            _claim(dev)
+            break
+        except usb.core.USBError:
+            if _attempt < 4:
+                time.sleep(1.0)
+            else:
+                raise
+    try:
+        pkt = bytearray(PKT_SIZE)
+        pkt[0] = 0x14
+        pkt[1] = 0x2c
+        r1, g1, b1 = color1
+        r2, g2, b2 = color2
+        # Speed: GUI 1–100 (100=fast) → hardware 1–100 (1=fast), so invert
+        hw_speed = max(1, 101 - speed)
+        if effect == "static":
+            pkt[2] = 0x00; pkt[4] = 0xff; pkt[5] = brightness; pkt[6] = 0x00
+            pkt[7] = 0xff; pkt[8] = 0xff; pkt[9] = r1; pkt[10] = g1; pkt[11] = b1
+        elif effect == "breathing":
+            pkt[2] = 0x01; pkt[4] = hw_speed; pkt[5] = brightness; pkt[6] = 0x00
+            pkt[7] = 0xff; pkt[8] = 0xff; pkt[9] = r1; pkt[10] = g1; pkt[11] = b1
+        elif effect == "breathing-rainbow":
+            pkt[2] = 0x01; pkt[4] = hw_speed; pkt[5] = brightness; pkt[6] = 0x02
+            pkt[7] = 0xff; pkt[8] = 0xff
+        elif effect == "breathing-dual":
+            pkt[2] = 0x01; pkt[4] = hw_speed; pkt[5] = brightness; pkt[6] = 0x10
+            pkt[7] = 0xff; pkt[8] = 0xff
+            pkt[9] = r1; pkt[10] = g1; pkt[11] = b1
+            pkt[12] = r2; pkt[13] = g2; pkt[14] = b2
+        elif effect == "reactive":
+            pkt[2] = 0x03; pkt[4] = hw_speed; pkt[5] = brightness; pkt[6] = 0x00
+            pkt[7] = 0xff; pkt[8] = 0xff
+            pkt[9] = r1; pkt[10] = g1; pkt[11] = b1
+            pkt[18] = r2; pkt[19] = g2; pkt[20] = b2
+        elif effect in ("wave", "wave-rainbow", "tornado", "tornado-rainbow"):
+            is_tornado = "tornado" in effect
+            pkt[2] = 0x04 if "wave" in effect else 0x07
+            pkt[4] = hw_speed; pkt[5] = brightness
+            # Tornado direction: 9=CW, 10=CCW; Wave direction: 0–7
+            dir_val = max(9, min(10, direction)) if is_tornado else direction
+            if "rainbow" in effect:
+                pkt[6] = 0x02; pkt[7] = dir_val
+                pkt[8] = 0x02; pkt[10] = 0xff; pkt[14] = 0xff
+            else:
+                pkt[6] = 0x00; pkt[7] = dir_val
+                pkt[8] = 0x00; pkt[9] = 0x01; pkt[10] = 0x64
+                pkt[11] = r1; pkt[12] = g1; pkt[13] = b1; pkt[14] = 0xff
+        elif effect in ("yeti", "matrix"):
+            pkt[2] = 0x06 if effect == "yeti" else 0x09
+            pkt[4] = hw_speed; pkt[5] = brightness; pkt[6] = 0x00
+            pkt[7] = 0xff; pkt[8] = 0xff
+            pkt[9] = r1; pkt[10] = g1; pkt[11] = b1
+            pkt[18] = r2; pkt[19] = g2; pkt[20] = b2
+        elif effect == "off":
+            pkt[2] = 0x0c; pkt[4] = 0xff; pkt[5] = 64
+            pkt[6] = 0xff; pkt[7] = 0xff; pkt[8] = 0xff
+        dev.write(EP_OUT, bytes(pkt))
+        try: dev.read(EP_IN, PKT_SIZE, timeout=1000)
+        except Exception: pass
+    finally:
+        _release(dev)
+
+
+# LED index → zone mapping (protocol §11.1)
+ZONE_LEDS = {
+    "fn":     [0, 9, 18, 27, 36, 45, 54, 63, 72, 81, 90, 99, 108, 117, 114, 123],
+    "num":    [1, 10, 19, 28, 37, 46, 55, 64, 73, 82, 91, 100, 109, 87, 96, 88, 115],
+    "qwerty": [2, 11, 20, 29, 38, 47, 56, 65, 74, 83, 92, 101, 110, 119, 105, 106, 97],
+    "home":   [3, 12, 21, 30, 39, 48, 57, 66, 75, 84, 93, 102, 120, 124],
+    "shift":  [4, 22, 31, 40, 49, 58, 67, 76, 85, 94, 103, 121, 104, 113, 122],
+    "bottom": [5, 14, 23, 41, 68, 77, 86, 95],
+    "numpad": [6, 7, 15, 16, 24, 33, 34, 42, 43, 51, 52, 60, 61, 69, 70, 78, 79],
+}
+
+
+def set_custom_rgb(zone_colors, side_color=(0, 0, 0), brightness=100):
+    """Set keyboard zones to individual colors via custom mode (§5.11).
+    zone_colors: dict of zone_name -> (r, g, b). Unspecified zones = black.
+    side_color: (r, g, b) for all 45 side ring LEDs.
+    """
+    # Build LED color array: 8 packets × 19 slots = 152 entries
+    leds = [(0, 0, 0)] * 152
+    for zone, color in zone_colors.items():
+        for idx in ZONE_LEDS.get(zone, []):
+            if idx < 152:
+                leds[idx] = color
+
+    dev = usb.core.find(idVendor=VID, idProduct=PID)
+    if dev is None:
+        print("Keyboard nicht gefunden!", file=sys.stderr)
+        sys.exit(1)
+    for _attempt in range(5):
+        try:
+            _claim(dev)
+            break
+        except usb.core.USBError:
+            if _attempt < 4:
+                time.sleep(1.0)
+            else:
+                raise
+    try:
+        def _wr(pkt):
+            dev.write(EP_OUT, bytes(pkt))
+            try: dev.read(EP_IN, PKT_SIZE, timeout=200)
+            except Exception: pass
+            time.sleep(0.020)
+
+        # §5.11.1 Enable custom mode
+        pkt = bytearray(PKT_SIZE)
+        pkt[0] = 0x14; pkt[1] = 0x2c; pkt[2] = 0x0a
+        pkt[4] = 0xff; pkt[5] = brightness
+        _wr(pkt)
+        time.sleep(0.150)  # Tastatur braucht Zeit zum Initialisieren des Custom Mode
+
+        # §5.11.3 Static colors for main keys: 8 packets × 19 LED slots
+        for ix in range(8):
+            pkt = bytearray(PKT_SIZE)
+            pkt[0] = 0x14; pkt[1] = 0x2c; pkt[2] = 0x00; pkt[3] = 0x01
+            pkt[4] = ix;   pkt[5] = brightness
+            for i in range(19):
+                r, g, b = leds[ix * 19 + i]
+                pkt[7 + i * 3]     = r
+                pkt[7 + i * 3 + 1] = g
+                pkt[7 + i * 3 + 2] = b
+            _wr(pkt)
+
+        # §5.11.4 Side ring LEDs: 3 packets (19 + 19 + 7 = 45 LEDs)
+        sr, sg, sb = side_color
+        for ix, count in enumerate([19, 19, 7]):
+            pkt = bytearray(PKT_SIZE)
+            pkt[0] = 0x14; pkt[1] = 0x2d; pkt[2] = 0x0a
+            pkt[4] = ix;   pkt[5] = 0xff
+            for i in range(count):
+                pkt[7 + i * 3]     = sr
+                pkt[7 + i * 3 + 1] = sg
+                pkt[7 + i * 3 + 2] = sb
+            _wr(pkt)
+
+        # §5.11.5 Bind all keys to static mode (0x00): 3 packets × 60 key slots
+        for chunk in range(3):
+            pkt = bytearray(PKT_SIZE)
+            pkt[0] = 0x14; pkt[1] = 0xa0; pkt[2] = chunk; pkt[3] = 0x01
+            _wr(pkt)
+    finally:
+        _release(dev)
+
+
+def reset_dial_image():
+    """Reset the dial image to the factory Mountain logo (protocol §3.4)."""
+    dev = usb.core.find(idVendor=VID, idProduct=PID)
+    if dev is None:
+        print("Keyboard nicht gefunden!", file=sys.stderr)
+        sys.exit(1)
+    _claim(dev)
+    try:
+        dev.write(EP_OUT, make_packet(0x13, 0x41, 0x00, 0x00, 0x01))
+        try: dev.read(EP_IN, PKT_SIZE, timeout=1000)
+        except Exception: pass
+    finally:
+        _release(dev)
+
+
+def upload_main_display(image_path, frame=0, activate=False):
     """Upload a custom image (PNG/JPG/GIF) to the main 240×204 OLED display."""
     img_bytes = image_to_rgb565(image_path, size=(MAIN_DISPLAY_W, MAIN_DISPLAY_H), frame=frame)
     dev = usb.core.find(idVendor=VID, idProduct=PID)
@@ -509,7 +691,8 @@ def upload_main_display(image_path, frame=0):
         sys.exit(1)
     _claim(dev)
     try:
-        _upload_main_display_image(dev, img_bytes)
+        _upload_main_display_image(dev, img_bytes, activate=activate)
+        dev._reattach = False
     finally:
         _release(dev)
 
@@ -751,6 +934,8 @@ if __name__ == "__main__":
     image_path        = None
     main_display_mode = "image"
     gif_frame         = 0
+    activate_custom   = False
+    rgb_args          = []
     i = 0
     while i < len(args):
         a = args[i]
@@ -776,6 +961,23 @@ if __name__ == "__main__":
             mode = "main-mode"
             main_display_mode = args[i + 1]  # "image" or "clock"
             i += 1
+        elif a == "reset-dial":
+            mode = "reset-dial"
+        elif a == "rgb" and i + 6 < len(args):
+            mode = "rgb"
+            rgb_args = args[i + 1:i + 7]
+            i += 6
+        elif a == "side-rgb" and i + 1 < len(args):
+            mode = "side-rgb"
+            side_rgb_hex = args[i + 1]
+            i += 1
+        elif a == "custom-rgb":
+            mode = "custom-rgb"
+            # remaining args are zone:rrggbb pairs and optional brightness:N
+            custom_rgb_args = args[i + 1:]
+            i = len(args)
+        elif a == "--activate-custom":
+            activate_custom = True
         elif a == "--frame" and i + 1 < len(args):
             gif_frame = int(args[i + 1])
             i += 1
@@ -795,8 +997,36 @@ if __name__ == "__main__":
     elif mode == "upload":
         upload_icon(btn_idx, image_path, frame=gif_frame)
     elif mode == "upload-main":
-        upload_main_display(image_path, frame=gif_frame)
+        upload_main_display(image_path, frame=gif_frame, activate=activate_custom)
     elif mode == "main-mode":
         set_main_display_mode(main_display_mode, style)
+    elif mode == "reset-dial":
+        reset_dial_image()
+    elif mode == "rgb":
+        eff, spd, bri, c1_hex, c2_hex, dr = rgb_args
+        c1 = (int(c1_hex[0:2], 16), int(c1_hex[2:4], 16), int(c1_hex[4:6], 16))
+        c2 = (int(c2_hex[0:2], 16), int(c2_hex[2:4], 16), int(c2_hex[4:6], 16))
+        set_rgb(eff, int(spd), int(bri), c1, c2, int(dr))
+    elif mode == "side-rgb":
+        h = side_rgb_hex.lstrip("#")
+        set_custom_rgb({}, side_color=(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)))
+    elif mode == "custom-rgb":
+        zone_colors = {}
+        side_color = (0, 0, 0)
+        brightness = 100
+        for token in custom_rgb_args:
+            if ":" not in token:
+                continue
+            k, v = token.split(":", 1)
+            if k == "brightness":
+                brightness = int(v)
+            else:
+                h = v.lstrip("#")
+                rgb = (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+                if k == "side":
+                    side_color = rgb
+                else:
+                    zone_colors[k] = rgb
+        set_custom_rgb(zone_colors, side_color=side_color, brightness=brightness)
     else:
         send_time(style)

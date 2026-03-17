@@ -18,12 +18,14 @@ Mountain Base Camp is only available on Windows — this project brings display 
   <img src="gitgui.png" alt="BaseCamp Linux GUI" width="320"/>
 </p>
 
-The GUI is split into a persistent **dashboard** at the top and four collapsible sections below:
+The GUI is split into a persistent **dashboard** at the top and six collapsible sections below:
 
 - **Dashboard** — Live clock display with 24H/12H toggle, language switcher (DE/EN + custom), Analog/Digital display style, splash screen and autostart toggles
 - **Monitor Mode** — Start/stop live keyboard display with CPU%, GPU%, RAM%, HDD% and Network MB/s metrics
 - **Main Display** — Switch between image and clock mode, upload a custom 240×204 image to the keyboard's main display
 - **Numpad Keys** — Assign shell commands and custom 72×72 images (including GIF frame picker) to D1–D4
+- **RGB Lighting** — Control keyboard RGB effects (Wave, Tornado, Reactive, Yeti, Matrix, and more) with speed, brightness, color and direction — settings saved automatically
+- **Custom RGB Mode (Beta)** — Set individual colors per keyboard zone (F Keys, Number Row, QWERTY, Home Row, Shift Row, Bottom Row, Numpad) plus the side ring LEDs — colors and brightness saved automatically
 - **OBS Integration** — Connect to OBS via WebSocket and trigger scene switches, recording or streaming from any D-button
 
 ---
@@ -34,33 +36,87 @@ The GUI is split into a persistent **dashboard** at the top and four collapsible
 - **24H / 12H** — Toggle clock format
 - **Monitor mode** — Live metrics on the keyboard display: CPU%, GPU%, RAM%, HDD%, Network MB/s
 - **Button actions (D1–D4)** — Assign any shell command to the 4 numpad keys (open apps, scripts, etc.)
-- **Image upload (D1–D4)** — Upload custom 72×72 images to each button
+- **Image upload (D1–D4)** — Upload custom 72×72 images to each button (GIF frame picker included)
 - **Main display upload** — Upload a custom 240×204 image to the keyboard's main display
+- **RGB Lighting** — Full RGB effect control: Wave, Tornado, Tornado Rainbow, Reactive, Yeti, Matrix, Off — with speed, brightness, color pickers and direction — settings saved to config
+- **Custom RGB Mode (Beta)** — Per-zone keyboard colors (7 zones) + side ring LED color and brightness — saved to config with reset-to-defaults button
 - **OBS integration** — Connect to OBS via WebSocket and trigger scene switches, recording or streaming from D1–D4
 - **System tray** — Minimize to tray, runs in the background
 - **Internationalization** — UI language switchable at runtime via external JSON files (DE + EN included, add your own)
 
 ---
 
-## Requirements
+## Known Issues
+
+### Main display stuck on Mountain logo (rare)
+
+In rare cases the main display shows the original Mountain logo and cannot be overwritten with a new image — the upload appears to complete but the logo stays.
+
+**Cause:** The keyboard's internal flash controller gets into a stuck state.
+
+**Fix:** Click **Reset Dial Image** in the Main Display section of the app. This resets the flash controller and clears the stuck state.
+
+---
+
+## Usage
 
 ```bash
+python3 gui.py
+```
+
+The GUI starts with a splash screen and auto-activates Monitor mode. The app minimizes to the system tray when closed.
+
+---
+
+## Installation
+
+### AppImage (Debian, Ubuntu, Mint, Fedora, Nobara)
+
+Self-contained AppImages are available in the [releases](../../releases). No Python installation required.
+
+| File | Distro |
+|------|--------|
+| `BaseCamp-Linux-x86_64-debian.AppImage` | Debian, Ubuntu, Linux Mint |
+| `BaseCamp-Linux-x86_64-fedora.AppImage` | Fedora, Nobara |
+
+```bash
+chmod +x BaseCamp-Linux-x86_64-*.AppImage
+./BaseCamp-Linux-x86_64-debian.AppImage   # or -fedora
+```
+
+USB permissions still need to be set up once (see below).
+
+> If you get a FUSE error on startup, add `--appimage-extract-and-run`:
+> ```bash
+> ./BaseCamp-Linux-x86_64-fedora.AppImage --appimage-extract-and-run
+> ```
+
+---
+
+### Arch / CachyOS / Manjaro — AUR
+
+```bash
+paru -S basecamp-linux
+```
+
+The udev rule is installed automatically. Just unplug and replug the keyboard after installation.
+
+---
+
+### From source
+
+```bash
+git clone https://github.com/ramisotti13-eng/BaseCamp-Linux.git
+cd BaseCamp-Linux
 pip install customtkinter pillow psutil obsws-python pystray
+python3 gui.py
 ```
 
 > **GPU monitoring** requires `nvidia-smi` (NVIDIA only).
 
 ---
 
-## Installation
-
-```bash
-git clone https://github.com/Ramisotti/BaseCamp-Linux.git
-cd BaseCamp-Linux
-pip install customtkinter pillow psutil obsws-python pystray
-```
-
-### USB permissions (required, one-time)
+### USB permissions (required once, AppImage + source installs)
 
 #### Debian / Ubuntu / Linux Mint
 
@@ -87,15 +143,8 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 #### Arch / CachyOS / Manjaro
 
-Arch uses Fish as default shell — switch to bash first:
-
 ```bash
-bash
-```
-
-Then run:
-
-```bash
+bash   # switch to bash if using Fish
 sudo tee /etc/udev/rules.d/99-mountain-everest-max.rules <<EOF
 SUBSYSTEM=="usb", ATTRS{idVendor}=="3282", ATTRS{idProduct}=="0001", MODE="0666"
 EOF
@@ -103,72 +152,6 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
 > Unplug and replug the keyboard. No group changes needed.
-
-
----
-
-## Known Issues
-
-### Main display stuck on Mountain logo (rare)
-
-In rare cases the main display shows the original Mountain logo and cannot be overwritten with a new image — the upload appears to complete but the logo stays.
-
-**Cause:** The keyboard's internal flash controller gets into a stuck state.
-
-**Fix:** Boot into Windows and use the original Mountain Base Camp software to upload any image to the main display. This resets the flash controller. Afterwards BaseCamp Linux works normally again.
-
----
-
-### Clock mode after main display image upload
-
-After uploading an image to the main display, switching back to **Clock** mode does not work immediately — the keyboard ignores the mode switch command.
-
-**Workaround:** Unplug and replug the keyboard, then click Clock in the app.
-
-This is a known firmware-level issue with the Mountain Everest Max. A fix is planned for the next release.
-
----
-
-## Usage
-
-```bash
-python3 gui.py
-```
-
-The GUI starts with a splash screen and auto-activates Monitor mode. The app minimizes to the system tray when closed.
-
----
-
-## Installation
-
-### Arch / CachyOS / Manjaro — AUR
-
-```bash
-paru -S basecamp-linux
-```
-
-The udev rule is installed automatically. Just unplug and replug the keyboard after installation.
-
-### AppImage (Debian, Ubuntu, Mint, Fedora, Nobara)
-
-Self-contained AppImages are available in the [releases](../../releases). No Python installation required.
-
-| File | Distro |
-|------|--------|
-| `BaseCamp-Linux-x86_64-debian.AppImage` | Debian, Ubuntu, Linux Mint |
-| `BaseCamp-Linux-x86_64-fedora.AppImage` | Fedora, Nobara |
-
-```bash
-chmod +x BaseCamp-Linux-x86_64-*.AppImage
-./BaseCamp-Linux-x86_64-debian.AppImage   # or -fedora
-```
-
-USB permissions still need to be set up once (see below).
-
-> If you get a FUSE error on startup, add `--appimage-extract-and-run`:
-> ```bash
-> ./BaseCamp-Linux-x86_64-fedora.AppImage --appimage-extract-and-run
-> ```
 
 ---
 
