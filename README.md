@@ -25,7 +25,7 @@ The GUI is split into a persistent **dashboard** at the top and six collapsible 
 - **Main Display** — Switch between image and clock mode, upload any image to the keyboard's main display — automatically converted to the correct format
 - **Numpad Keys** — Assign actions (Shell, URL, Folder, App) and custom button images (including GIF frame picker) to D1–D4 — automatically converted to the correct format
 - **RGB Lighting** — Control keyboard RGB effects (Wave, Tornado, Reactive, Yeti, Matrix, and more) with speed, brightness, color and direction — settings saved automatically
-- **Custom RGB Mode** — Per-key color editor: click or drag-select keys, assign colors, use the eyedropper (Alt+click), undo (Ctrl+Z), and save/load named presets — side LEDs fully selectable around both keyboard and numpad bezels
+- **Custom RGB Mode** — Per-key color editor: click or drag-select keys, assign colors, use the eyedropper (Alt+click), undo (Ctrl+Z), and save/load named presets — side LEDs fully selectable around both keyboard and numpad bezels (see [Custom RGB Mode](#custom-rgb-mode-1) below)
 - **OBS Integration** — Connect to OBS via WebSocket and trigger scene switches, recording or streaming from any D-button
 
 ---
@@ -40,6 +40,52 @@ The GUI is split into a persistent **dashboard** at the top and six collapsible 
 - **Main display upload** — Upload any image to the keyboard's main display — automatically converted and resized
 - **RGB Lighting** — Full RGB effect control: Wave, Tornado, Tornado Rainbow, Reactive, Yeti, Matrix, Off — with speed, brightness, color pickers and direction — settings saved to config
 - **Custom RGB Mode** — Per-key color editor with rubber band selection, eyedropper, undo, and named presets — side LEDs selectable individually around keyboard and numpad — includes built-in Synthwave preset
+
+---
+
+## Custom RGB Mode
+
+<p align="center">
+  <img src="customrgb.png" alt="Custom RGB Mode Editor" width="600"/>
+</p>
+
+Click **Open Key Color Editor** in the Custom RGB Mode section to open the editor.
+
+### Selecting keys
+| Action | Result |
+|--------|--------|
+| Left-click a key | Select it (deselects others) |
+| Ctrl+click | Add/remove key from selection |
+| Right-click | Toggle key in/out of selection |
+| Click + drag | Rubber band — selects all keys the band touches |
+| **Select All** button | Select every key and side LED |
+| **Deselect** button | Clear the selection |
+
+Side LEDs are shown as small squares around the keyboard and numpad bezels and work exactly like keys.
+
+### Coloring keys
+| Action | Result |
+|--------|--------|
+| Click the color swatch (top-left) | Open the HSV color wheel picker |
+| **Fill Selected** button | Apply the current color to all selected keys |
+| **All White** / **All Black** buttons | Fill every key and side LED at once |
+| Alt+click a key | Eyedropper — samples that key's color into the swatch |
+
+### Applying to keyboard
+| Button | What it does |
+|--------|-------------|
+| **Apply to Keyboard** | Sends the current colors to the keyboard over USB |
+| **Persist to Slot** | Saves colors permanently to the keyboard's flash — survives power cycles and software restarts |
+
+### Undo & Presets
+| Action | Result |
+|--------|--------|
+| Ctrl+Z or **Undo** button | Undo the last color change (up to 20 steps) |
+| **Save as…** | Save the current color layout as a named preset |
+| **Load** | Apply a saved preset to the canvas |
+| **Delete** | Remove a saved preset |
+
+A built-in **Synthwave** preset is included as a starting point.
 - **OBS integration** — Connect to OBS via WebSocket and trigger scene switches, recording or streaming from D1–D4 — settings save automatically on change
 - **System tray** — Minimize to tray, runs in the background
 - **Internationalization** — UI language switchable at runtime via external JSON files (DE + EN included, add your own)
