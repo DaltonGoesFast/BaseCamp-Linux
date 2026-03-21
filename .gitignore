@@ -3,3 +3,18 @@ __pycache__/
 .claude/
 *.bin
 *.log
+
+# Build artifacts
+AppDir/
+build/
+dist/
+*.AppImage
+Archiv.zip
+
+# Capture / debug files
+*.pcap
+debug1.txt
+firm.png
+mo.png
+protocol_notes.md
+aur-repo

@@ -1,0 +1,399 @@
+"""Shared configuration paths and load/save helpers for BaseCamp Linux."""
+import os
+import sys
+import json
+import pwd as _pwd
+from PIL import Image
+
+# ── Path setup ─────────────────────────────────────────────────────────────────
+
+_real_home = (
+    _pwd.getpwnam(os.environ["SUDO_USER"]).pw_dir
+    if os.environ.get("SUDO_USER")
+    else os.path.expanduser("~")
+)
+
+CONFIG_DIR       = os.path.join(_real_home, ".config", "mountain-time-sync")
+os.makedirs(CONFIG_DIR, exist_ok=True)
+
+STYLE_FILE       = os.path.join(CONFIG_DIR, "style")
+BUTTON_FILE      = os.path.join(CONFIG_DIR, "buttons.json")
+OBS_FILE         = os.path.join(CONFIG_DIR, "obs.json")
+OBS_BACKUP_FILE  = os.path.join(CONFIG_DIR, "obs_backup.json")
+MAIN_MODE_FILE   = os.path.join(CONFIG_DIR, "main_display_mode")
+AUTOSTART_FILE   = os.path.join(
+    _real_home, ".config", "autostart", "basecamp-linux.desktop"
+)
+SPLASH_FILE      = os.path.join(CONFIG_DIR, "splash")
+ZONE_FILE        = os.path.join(CONFIG_DIR, "zone_colors.json")
+RGB_FILE         = os.path.join(CONFIG_DIR, "rgb_settings.json")
+PER_KEY_FILE     = os.path.join(CONFIG_DIR, "per_key_colors.json")
+PRESET_FILE      = os.path.join(CONFIG_DIR, "rgb_presets.json")
+ICON_LAST_FILE   = os.path.join(CONFIG_DIR, "icon_last.json")
+ICON_LIBRARY_DIR = os.path.join(CONFIG_DIR, "icon_library")
+MAIN_LIBRARY_DIR = os.path.join(CONFIG_DIR, "main_library")
+
+# Keep these for backward compatibility in code that imports them by old names
+RGB_PRESETS_FILE = PRESET_FILE
+
+
+# ── OBS internal order ────────────────────────────────────────────────────────
+
+OBS_INTERNAL_ORDER = ["none", "scene", "record", "stream"]
+
+# ── Style ──────────────────────────────────────────────────────────────────────
+
+def load_config():
+    """Load style string. Returns 'analog' if not set."""
+    try:
+        with open(STYLE_FILE) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return "analog"
+
+
+def save_config(style_arg):
+    with open(STYLE_FILE, "w") as f:
+        f.write(style_arg)
+
+
+# Keep old names used throughout gui.py
+load_style = load_config
+save_style = save_config
+
+
+# ── Buttons ────────────────────────────────────────────────────────────────────
+
+def load_buttons():
+    default = [{"icon": 7, "action": "", "type": "shell"} for _ in range(4)]
+    try:
+        with open(BUTTON_FILE) as f:
+            data = json.load(f)
+        for i in range(4):
+            if i < len(data):
+                default[i].update(data[i])
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return default
+
+
+def save_buttons(buttons):
+    with open(BUTTON_FILE, "w") as f:
+        json.dump(buttons, f, indent=2)
+
+
+# ── OBS ────────────────────────────────────────────────────────────────────────
+
+def load_obs_config():
+    default = {
+        "host": "localhost",
+        "port": 4455,
+        "password": "",
+        "buttons": [{"type": "none", "scene": ""} for _ in range(4)],
+    }
+    try:
+        with open(OBS_FILE) as f:
+            data = json.load(f)
+        for k in ("host", "port", "password"):
+            if k in data:
+                default[k] = data[k]
+        for i in range(4):
+            if i < len(data.get("buttons", [])):
+                default["buttons"][i].update(data["buttons"][i])
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return default
+
+
+def save_obs_config(cfg):
+    with open(OBS_FILE, "w") as f:
+        json.dump(cfg, f, indent=2)
+
+
+# ── Autostart ──────────────────────────────────────────────────────────────────
+
+def _autostart_exec():
+    _FROZEN = getattr(sys, "frozen", False)
+    if _FROZEN:
+        return os.environ.get("APPIMAGE", sys.executable)
+    # __file__ would refer to this module; we need the gui entry point.
+    # Callers that know the gui path can override; fall back to gui.py sibling.
+    gui_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "gui.py")
+    return f"{sys.executable} {gui_path}"
+
+
+def load_autostart_enabled():
+    return os.path.exists(AUTOSTART_FILE)
+
+
+def save_autostart_enabled(val):
+    if val:
+        os.makedirs(os.path.dirname(AUTOSTART_FILE), exist_ok=True)
+        with open(AUTOSTART_FILE, "w") as f:
+            f.write(
+                "[Desktop Entry]\n"
+                "Type=Application\n"
+                "Name=BaseCamp Linux\n"
+                "Comment=Mountain Everest Max display control\n"
+                f"Exec={_autostart_exec()}\n"
+                "Icon=basecamp-linux\n"
+                "Hidden=false\n"
+                "NoDisplay=false\n"
+                "X-GNOME-Autostart-enabled=true\n"
+            )
+    else:
+        try:
+            os.remove(AUTOSTART_FILE)
+        except FileNotFoundError:
+            pass
+
+
+# ── Splash ─────────────────────────────────────────────────────────────────────
+
+def load_splash_enabled():
+    try:
+        return open(SPLASH_FILE).read().strip() != "0"
+    except FileNotFoundError:
+        return True
+
+
+def save_splash_enabled(val):
+    with open(SPLASH_FILE, "w") as f:
+        f.write("1" if val else "0")
+
+
+# ── RGB zone colors ────────────────────────────────────────────────────────────
+
+def load_zone_colors(defaults):
+    """Load zone color dict and brightness from ZONE_FILE.
+    Returns (colors_dict, brightness_int)."""
+    try:
+        data = json.loads(open(ZONE_FILE).read())
+        colors = dict(defaults)
+        for k in colors:
+            if k in data and len(data[k]) == 3:
+                colors[k] = tuple(data[k])
+        brightness = int(data.get("brightness", 100))
+        return colors, brightness
+    except Exception:
+        return dict(defaults), 100
+
+
+# Keep old name used in gui.py
+load_zone_config = load_zone_colors
+
+
+def save_zone_colors(colors, brightness):
+    data = {k: list(v) for k, v in colors.items()}
+    data["brightness"] = brightness
+    with open(ZONE_FILE, "w") as f:
+        f.write(json.dumps(data, indent=2))
+
+
+# Keep old name used in gui.py
+save_zone_config = save_zone_colors
+
+
+# ── RGB effect settings ────────────────────────────────────────────────────────
+
+def load_rgb_settings():
+    try:
+        return json.loads(open(RGB_FILE).read())
+    except Exception:
+        return {}
+
+
+# Keep old name used in gui.py
+load_rgb_config = load_rgb_settings
+
+
+def save_rgb_settings(data):
+    with open(RGB_FILE, "w") as f:
+        f.write(json.dumps(data, indent=2))
+
+
+# Keep old name used in gui.py
+save_rgb_config = save_rgb_settings
+
+
+# ── Per-key RGB ────────────────────────────────────────────────────────────────
+
+_SIDE_ZONE_INDICES = [
+    [13, 14, 15, 7, 6, 5, 4, 3, 2, 1, 0],             # main top   (11)
+    [9, 8, 10, 11],                                     # main right  (4)
+    [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 12],  # main bottom(12)
+    [16, 17, 18, 19],                                   # main left   (4)
+    [31, 44, 43, 42],                                   # np top      (4)
+    [41, 40, 39],                                       # np right    (3)
+    [35, 36, 37, 38],                                   # np bottom   (4)
+    [32, 33, 34],                                       # np left     (3)
+]
+
+
+def _load_per_key():
+    default_side = [(255, 255, 255)] * 45
+    try:
+        d = json.loads(open(PER_KEY_FILE).read())
+        leds = [tuple(c) for c in d.get("leds", [])]
+        leds = (leds + [(20, 20, 20)] * 126)[:126]
+        raw = d.get("side", [])
+        if isinstance(raw, list) and len(raw) == 45:
+            side = [tuple(c) for c in raw]
+        elif isinstance(raw, dict):
+            # backward compat: zone dict → expand to 45
+            side = list(default_side)
+            zone_map = {
+                "Top":    _SIDE_ZONE_INDICES[0], "Right":  _SIDE_ZONE_INDICES[1],
+                "Bottom": _SIDE_ZONE_INDICES[2], "Left":   _SIDE_ZONE_INDICES[3],
+                "NP": _SIDE_ZONE_INDICES[4] + _SIDE_ZONE_INDICES[5] +
+                      _SIDE_ZONE_INDICES[6] + _SIDE_ZONE_INDICES[7],
+            }
+            for z, idxs in zone_map.items():
+                c = tuple(raw.get(z, (255, 255, 255)))
+                for i in idxs:
+                    side[i] = c
+        else:
+            side = list(default_side)
+        bri = int(d.get("brightness", 100))
+        return leds, side, bri
+    except Exception:
+        return [(20, 20, 20)] * 126, list(default_side), 100
+
+
+def _save_per_key(leds, side, bri):
+    with open(PER_KEY_FILE, "w") as f:
+        f.write(json.dumps({
+            "leds": [list(c) for c in leds],
+            "side": [list(c) for c in side],
+            "brightness": bri,
+        }, indent=2))
+
+
+# ── Presets ────────────────────────────────────────────────────────────────────
+
+def _load_presets():
+    _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _FROZEN = getattr(sys, "frozen", False)
+    _RES = getattr(sys, "_MEIPASS", _HERE) if _FROZEN else _HERE
+    defaults = {}
+    _default_file = os.path.join(_RES, "default_presets.json")
+    try:
+        defaults = json.loads(open(_default_file).read())
+    except Exception:
+        pass
+    try:
+        user = json.loads(open(PRESET_FILE).read())
+        defaults.update(user)
+    except Exception:
+        pass
+    return defaults
+
+
+def _save_presets(presets):
+    with open(PRESET_FILE, "w") as f:
+        f.write(json.dumps(presets, indent=2))
+
+
+# ── Icon library helpers ────────────────────────────────────────────────────────
+
+def _load_icon_last():
+    """Return dict {slot_str: thumb_filename} for last uploaded image per slot."""
+    try:
+        return json.load(open(ICON_LAST_FILE))
+    except Exception:
+        return {}
+
+
+def _save_icon_last(slot, filename):
+    data = _load_icon_last()
+    data[str(slot)] = filename
+    with open(ICON_LAST_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def _save_to_library(path, gif_frame=0):
+    """Resize image to 72×72, save as PNG by content-hash. Returns filename or None."""
+    import hashlib
+    try:
+        img = Image.open(path)
+        try:
+            img.seek(gif_frame)
+        except Exception:
+            pass
+        img = img.convert("RGB").resize((72, 72), Image.LANCZOS)
+        buf = img.tobytes()
+        h = hashlib.md5(buf).hexdigest()[:16]
+        os.makedirs(ICON_LIBRARY_DIR, exist_ok=True)
+        out = os.path.join(ICON_LIBRARY_DIR, f"{h}.png")
+        if not os.path.exists(out):
+            img.save(out, "PNG")
+        return f"{h}.png"
+    except Exception:
+        return None
+
+
+def _save_to_main_library(path, gif_frame=0):
+    """Save 96×82 thumbnail of main display image to main_library. Returns filename or None."""
+    import hashlib
+    try:
+        img = Image.open(path)
+        try:
+            img.seek(gif_frame)
+        except Exception:
+            pass
+        img = img.convert("RGB").resize((96, 82), Image.LANCZOS)
+        buf = img.tobytes()
+        h = hashlib.md5(buf).hexdigest()[:16]
+        os.makedirs(MAIN_LIBRARY_DIR, exist_ok=True)
+        out = os.path.join(MAIN_LIBRARY_DIR, f"{h}.png")
+        if not os.path.exists(out):
+            img.save(out, "PNG")
+        return f"{h}.png"
+    except Exception:
+        return None
+
+
+def _compute_lib_hash(path, gif_frame=0):
+    """Return the library filename (hash.png) for an image without saving it."""
+    import hashlib
+    try:
+        img = Image.open(path)
+        try:
+            img.seek(gif_frame)
+        except Exception:
+            pass
+        img = img.convert("RGB").resize((72, 72), Image.LANCZOS)
+        h = hashlib.md5(img.tobytes()).hexdigest()[:16]
+        return f"{h}.png"
+    except Exception:
+        return None
+
+
+def _compute_main_lib_hash(path, gif_frame=0):
+    import hashlib
+    try:
+        img = Image.open(path)
+        try:
+            img.seek(gif_frame)
+        except Exception:
+            pass
+        img = img.convert("RGB").resize((96, 82), Image.LANCZOS)
+        h = hashlib.md5(img.tobytes()).hexdigest()[:16]
+        return f"{h}.png"
+    except Exception:
+        return None
+
+
+def _list_library():
+    """Return sorted list of PNG filenames in the icon library."""
+    try:
+        return sorted(f for f in os.listdir(ICON_LIBRARY_DIR) if f.endswith(".png"))
+    except FileNotFoundError:
+        return []
+
+
+def _list_main_library():
+    try:
+        return sorted(f for f in os.listdir(MAIN_LIBRARY_DIR) if f.endswith(".png"))
+    except FileNotFoundError:
+        return []

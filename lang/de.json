@@ -25,7 +25,7 @@
   "action_type_app": "App",
   "app_picker_title": "App wählen",
   "app_picker_search": "Suchen…",
-  "image_btn": "Bild",
+  "image_btn": "Bild hochladen",
   "image_label": "Bild",
   "obs_title": "OBS Integration",
   "obs_password": "Passwort:",
@@ -130,6 +130,6 @@
   "multi_upload_empty": "Noch keine Bilder — lade zuerst ein Bild hoch",
   "multi_upload_start": "Alle hochladen",
   "image_unchanged": "D{d}: Bild unverändert — übersprungen",
-  "image_btn": "Bild hochladen",
-  "main_display_unchanged": "Bild unverändert — übersprungen"
+  "main_display_unchanged": "Bild unverändert — übersprungen",
+  "main_mode_volume": "Lautstärke"
 }

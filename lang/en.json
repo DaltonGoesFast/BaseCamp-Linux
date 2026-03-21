@@ -25,7 +25,7 @@
   "action_type_app": "App",
   "app_picker_title": "Select App",
   "app_picker_search": "Search…",
-  "image_btn": "Image",
+  "image_btn": "Upload Image",
   "image_label": "Image",
   "obs_title": "OBS Integration",
   "obs_password": "Password:",
@@ -130,6 +130,6 @@
   "multi_upload_empty": "No images yet — upload one first",
   "multi_upload_start": "Upload All",
   "image_unchanged": "D{d}: Image unchanged — skipped",
-  "image_btn": "Upload Image",
-  "main_display_unchanged": "Image unchanged — skipped"
+  "main_display_unchanged": "Image unchanged — skipped",
+  "main_mode_volume": "Volume"
 }
