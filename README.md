@@ -137,11 +137,25 @@ The main display has its own separate library (`main_library/`) with thumbnails 
 
 ### Keyboard Firmware
 
-> **Important:** This software is only compatible with keyboard firmware version **57.24.20**.
-> Other firmware versions may not work correctly.
+> **Important:** This software requires keyboard firmware **57** (the first number in the version string).
+> The full version `57.24.20` refers to three separate components:
+> - `57` — Keyboard main firmware
+> - `24` — Numpad firmware
+> - `20` — Displaypad firmware
 >
-> If you are on a different version, download and install the firmware manually:
+> If your version shows as `57.0.0`, your keyboard firmware is correct — the `.0.0` simply means the Numpad and Displaypad are not connected or not detected at that moment.
+>
+> If your keyboard firmware is not `57`, download and install it manually:
 > **[Mountain_Everest_57.24.20.zip](https://mountain.gg/assets/Software/Mountain_Everest_57.24.20.zip)**
+
+### Numpad / Displaypad not detected (version shows `57.0.0`)
+
+If your Numpad or Displaypad firmware shows as `0`, the keyboard is not detecting them. Try the following steps:
+
+1. **Unplug and reconnect** the Numpad and Displaypad cables to the keyboard.
+2. **Power cycle** the keyboard by unplugging and replugging the main USB cable.
+3. Run the Mountain Base Camp firmware updater on Windows with all components connected — it will detect and update the Numpad and Displaypad firmware automatically.
+4. If a component is still not detected, try a different USB port or cable.
 
 ---
 
