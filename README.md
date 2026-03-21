@@ -133,6 +133,18 @@ The main display has its own separate library (`main_library/`) with thumbnails 
 
 ---
 
+## Requirements
+
+### Keyboard Firmware
+
+> **Important:** This software is only compatible with keyboard firmware version **57.24.20**.
+> Other firmware versions may not work correctly.
+>
+> If you are on a different version, download and install the firmware manually:
+> **[Mountain_Everest_57.24.20.zip](https://mountain.gg/assets/Software/Mountain_Everest_57.24.20.zip)**
+
+---
+
 ## Known Issues
 
 ### Main display stuck on Mountain logo (rare)
