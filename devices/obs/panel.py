@@ -181,7 +181,8 @@ class OBSPanel(ctk.CTkFrame):
         save_obs_config(self._build_cfg())
         self._status.configure(
             text=self.T("obs_connected", n=len(scenes)), text_color=GRN)
-        self._app._sw_obs_btn.configure(fg_color=GRN, text_color=FG)
+        self._app._dev_present["obs"] = True
+        self._app._refresh_switcher_colors()
 
     def _build_cfg(self):
         return {

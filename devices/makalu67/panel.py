@@ -140,7 +140,8 @@ class Makalu67Panel(ctk.CTkFrame):
             s.measure()
 
     def _build_rgb_section(self, scroll):
-        s = _PlaceholderSection(scroll, self._app, "💡", self.T("makalu_rgb_title"))
+        title = f"{self.T('makalu_rgb_title')} — {self._model_name}"
+        s = _PlaceholderSection(scroll, self._app, "💡", title)
         self._sections.append(s)
         self._section_titles.append((s, "makalu_rgb_title"))
         self._rgb_section = s

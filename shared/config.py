@@ -42,7 +42,8 @@ DISPLAYPAD_BTN_FILE        = os.path.join(CONFIG_DIR, "displaypad_buttons.json")
 DISPLAYPAD_FULLSCREEN_FILE = os.path.join(CONFIG_DIR, "displaypad_fullscreen.json")
 DISPLAYPAD_ACTIONS_FILE    = os.path.join(CONFIG_DIR, "displaypad_actions.json")
 DISPLAYPAD_PAGES_FILE      = os.path.join(CONFIG_DIR, "displaypad_pages.json")
-DISPLAYPAD_ROTATION_FILE   = os.path.join(CONFIG_DIR, "displaypad_rotation")
+DISPLAYPAD_ROTATION_FILE    = os.path.join(CONFIG_DIR, "displaypad_rotation")
+DISPLAYPAD_BRIGHTNESS_FILE  = os.path.join(CONFIG_DIR, "displaypad_brightness")
 
 # Keep these for backward compatibility in code that imports them by old names
 RGB_PRESETS_FILE = PRESET_FILE
@@ -467,6 +468,19 @@ def _load_displaypad_rotation():
 def _save_displaypad_rotation(deg):
     with open(DISPLAYPAD_ROTATION_FILE, "w") as f:
         f.write(str(deg))
+
+
+def _load_displaypad_brightness():
+    try:
+        v = int(open(DISPLAYPAD_BRIGHTNESS_FILE).read().strip())
+        return v if v in (0, 25, 50, 75, 100) else 100
+    except Exception:
+        return 100
+
+
+def _save_displaypad_brightness(val):
+    with open(DISPLAYPAD_BRIGHTNESS_FILE, "w") as f:
+        f.write(str(val))
 
 
 # ── DisplayPad library helpers ────────────────────────────────────────────────

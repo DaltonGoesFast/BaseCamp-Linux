@@ -200,6 +200,8 @@ class App(ctk.CTk):
 
         self._active_device = None   # "everest_max" | "makalu67" | "displaypad"
         self._panels        = {}     # populated in _build_ui
+        self._dev_present   = {"everest_max": False, "makalu67": False,
+                               "displaypad": False, "obs": False}
 
         self._build_ui()
 
@@ -441,22 +443,7 @@ class App(ctk.CTk):
         self._active_device = device_id
 
         # Update switcher button styles
-        self._sw_keyboard_btn.configure(
-            fg_color=BLUE if device_id == "everest_max" else BG2,
-            text_color=FG  if device_id == "everest_max" else FG2)
-        self._sw_mouse_btn.configure(
-            fg_color=BLUE if device_id == "makalu67" else BG2,
-            text_color=FG  if device_id == "makalu67" else FG2)
-        self._sw_displaypad_btn.configure(
-            fg_color=BLUE if device_id == "displaypad" else BG2,
-            text_color=FG  if device_id == "displaypad" else FG2)
-        obs_connected = hasattr(self, "_obs_panel") and self._obs_panel.is_connected()
-        if device_id == "obs":
-            self._sw_obs_btn.configure(fg_color=BLUE, text_color=FG)
-        elif obs_connected:
-            self._sw_obs_btn.configure(fg_color=GRN, text_color=FG)
-        else:
-            self._sw_obs_btn.configure(fg_color=BG2, text_color=FG2)
+        self._refresh_switcher_colors()
 
     # ── Controller delegation ─────────────────────────────────────────────────
 
@@ -482,30 +469,46 @@ class App(ctk.CTk):
 
     def _check_devices(self):
         """Periodic USB presence check (runs in main thread — /sys reads are <1ms)."""
-        kb_present  = _check_usb_presence(self.EVEREST_MAX_VID, self.EVEREST_MAX_PID)
+        kb_present    = _check_usb_presence(self.EVEREST_MAX_VID, self.EVEREST_MAX_PID)
         mouse_present = (_check_usb_presence(self.MAKALU67_VID, self.MAKALU67_PID)
                          or _check_usb_presence(self.MAKALU67_VID, 0x0002))
-        dp_present  = _check_usb_presence(self.DISPLAYPAD_VID, self.DISPLAYPAD_PID)
+        dp_present    = _check_usb_presence(self.DISPLAYPAD_VID, self.DISPLAYPAD_PID)
         self._update_device_status(kb_present, mouse_present, dp_present)
         self.after(5000, self._check_devices)
 
     def _update_device_status(self, kb_present, mouse_present, dp_present=False):
         """Update switcher button appearance based on device presence."""
-        # Keyboard button
-        self._sw_keyboard_btn.configure(
-            text="Keyboard" + ("" if kb_present else " ⚠"),
-            text_color=FG if self._active_device == "everest_max" else FG2)
-        # Mouse button
-        self._sw_mouse_btn.configure(
-            text="Mouse" + ("" if mouse_present else " ⚠"),
-            text_color=FG if self._active_device == "makalu67" else FG2)
-        # DisplayPad button
-        self._sw_displaypad_btn.configure(
-            text="DisplayPad" + ("" if dp_present else " ⚠"),
-            text_color=FG if self._active_device == "displaypad" else FG2)
+        obs_connected = hasattr(self, "_obs_panel") and self._obs_panel.is_connected()
+        self._dev_present["everest_max"] = kb_present
+        self._dev_present["makalu67"]    = mouse_present
+        self._dev_present["displaypad"]  = dp_present
+        self._dev_present["obs"]         = obs_connected
+        # Update button labels
+        mouse_label = getattr(self._makalu_panel, "_model_name", "Mouse") if hasattr(self, "_makalu_panel") else "Mouse"
+        self._sw_keyboard_btn.configure(text="Keyboard")
+        self._sw_mouse_btn.configure(text=mouse_label)
+        self._sw_displaypad_btn.configure(text="DisplayPad")
+        self._refresh_switcher_colors()
         # Notify panels
         if hasattr(self, "_makalu_panel"):
             self._makalu_panel.set_connected(mouse_present)
+
+    def _refresh_switcher_colors(self):
+        """Apply fg_color/text_color to each switcher button: blue=active, green=present, gray=absent."""
+        for dev_id, btn in [
+            ("everest_max", self._sw_keyboard_btn),
+            ("makalu67",    self._sw_mouse_btn),
+            ("displaypad",  self._sw_displaypad_btn),
+            ("obs",         self._sw_obs_btn),
+        ]:
+            active  = self._active_device == dev_id
+            present = self._dev_present.get(dev_id, False)
+            if active:
+                btn.configure(fg_color=BLUE, text_color=FG)
+            elif present:
+                btn.configure(fg_color=GRN, text_color=FG)
+            else:
+                btn.configure(fg_color=BG2, text_color=FG2)
 
     # ── Tray / lifecycle ──────────────────────────────────────────────────────
 

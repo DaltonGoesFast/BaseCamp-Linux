@@ -31,6 +31,7 @@ from shared.config import (
     _load_displaypad_actions, _save_displaypad_actions,
     _load_displaypad_pages, _save_displaypad_pages,
     _load_displaypad_rotation, _save_displaypad_rotation,
+    _load_displaypad_brightness, _save_displaypad_brightness,
 )
 
 try:
@@ -79,6 +80,15 @@ IMG_MSG_TEMPLATE = bytearray.fromhex(
     "00000000000000000000000000000000000000000000000000000000000000"
     "0000"
 )
+
+def _set_brightness(hid_dev, percent):
+    """Set DisplayPad backlight brightness. percent: 0, 25, 50, 75, or 100."""
+    percent = max(0, min(100, int(percent)))
+    buf = bytearray(64)
+    buf[0] = 0x12
+    buf[1] = 0x03
+    buf[4] = percent
+    hid_dev.write(bytes(buf))
 
 # ── USB helpers ───────────────────────────────────────────────────────────────
 
@@ -1061,6 +1071,7 @@ class DisplayPadPanel(ctk.CTkFrame):
         self._upload_queue     = queue.Queue()
         self._fullscreen_group = set()   # key indices that form a synced fullscreen GIF
         self._rotation         = _load_displaypad_rotation()
+        self._brightness       = _load_displaypad_brightness()
         # GUI preview animation
         self._gui_frames_sm  = {}
         self._gui_fidx       = {}
@@ -1179,7 +1190,18 @@ class DisplayPadPanel(ctk.CTkFrame):
             text_color=FG, font=("Helvetica", 10), width=60, height=24,
             command=self._on_rotation_change)
         self._rot_menu.set(f"{self._rotation}°")
-        self._rot_menu.pack(side="right")
+        self._rot_menu.pack(side="right", padx=(4, 0))
+
+        self._bri_menu = ctk.CTkOptionMenu(
+            head_row, values=["0%", "25%", "50%", "75%", "100%"],
+            fg_color=BG2, button_color=BG3, button_hover_color=BORDER,
+            text_color=FG, font=("Helvetica", 10), width=72, height=24,
+            command=self._on_brightness_change)
+        self._bri_menu.set(f"{self._brightness}%")
+        self._bri_menu.pack(side="right", padx=(4, 0))
+
+        ctk.CTkLabel(head_row, text="☀", font=("Helvetica", 12),
+                     text_color=FG2, fg_color="transparent").pack(side="right")
 
         # Page indicator bar
         page_bar = ctk.CTkFrame(content, fg_color="transparent")
@@ -1275,6 +1297,24 @@ class DisplayPadPanel(ctk.CTkFrame):
             content, text="",
             font=("Helvetica", 11), text_color=FG2, fg_color="transparent")
         self._info_label.pack(pady=(0, 8))
+
+    def _on_brightness_change(self, val):
+        pct = int(val.replace("%", ""))
+        self._brightness = pct
+        _save_displaypad_brightness(pct)
+        def _apply():
+            try:
+                dev_path = next(
+                    d['path'] for d in __import__('hid').enumerate(VID, PID)
+                    if d['interface_number'] == 3)
+                h = __import__('hid').Device(path=dev_path)
+                try:
+                    _set_brightness(h, pct)
+                finally:
+                    h.close()
+            except Exception:
+                pass
+        threading.Thread(target=_apply, daemon=True).start()
 
     def _on_rotation_change(self, val):
         deg = int(val.replace("°", ""))
@@ -1753,10 +1793,15 @@ class DisplayPadPanel(ctk.CTkFrame):
     def _stop_animation(self):
         self._anim_stop.set()
 
-    def _worker(self, assigned):
+    def _worker(self, assigned, _retry=0):
         try:
             usb_dev, hid_dev = _open_interfaces()
         except Exception as e:
+            if _retry < 5:
+                # Device busy at boot — retry after a short delay
+                delay = (2 + _retry * 2) * 1000  # 2s, 4s, 6s, 8s, 10s
+                self.after(delay, lambda: self._worker(assigned, _retry + 1))
+                return
             self.after(0, lambda e=e: self._finish(False, str(e)))
             return
         try:
@@ -1907,6 +1952,7 @@ class DisplayPadPanel(ctk.CTkFrame):
     def _on_device_connected(self, has_content):
         if self._uploading or self._animating:
             return
+        self._on_brightness_change(f"{self._brightness}%")
         if has_content:
             self._info_label.configure(text=self.T("dp_reconnected"), text_color=FG2)
             self.after(2500, self._start_upload)

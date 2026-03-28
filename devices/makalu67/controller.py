@@ -432,8 +432,9 @@ def set_button_sniper(button_index, sniper_dpi):
       buf[20:22] = sniper_dpi (LE16, Y-axis — same value)
       buf[22]    = 0x0F
     """
-    if not 1 <= button_index <= 6:
-        raise ValueError(f"Button index must be 1–6, got {button_index}")
+    max_btn = 8 if PID == PID_MAX else 6
+    if not 1 <= button_index <= max_btn:
+        raise ValueError(f"Button index must be 1–{max_btn}, got {button_index}")
     sniper_dpi = max(DPI_MIN, min(DPI_MAX, (sniper_dpi // DPI_STEP) * DPI_STEP))
     buf = [0] * 64
     buf[0]  = REPORT_ID
@@ -467,8 +468,9 @@ def set_button_remap(button_index, function_name):
     fn = REMAP_FUNCTIONS.get(function_name.lower())
     if fn is None:
         raise ValueError(f"Unknown function '{function_name}'. Valid: {list(REMAP_FUNCTIONS)}")
-    if not 1 <= button_index <= 6:
-        raise ValueError(f"Button index must be 1–6, got {button_index}")
+    max_btn = 8 if PID == PID_MAX else 6
+    if not 1 <= button_index <= max_btn:
+        raise ValueError(f"Button index must be 1–{max_btn}, got {button_index}")
     buf = [0] * 64
     buf[0]  = REPORT_ID
     buf[1]  = CMD_REMAP

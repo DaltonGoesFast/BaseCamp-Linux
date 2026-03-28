@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.6.2-beta] - 2026-03-28
+
+### Makalu Max (PID 0x0002) — Full Support
+
+- **Automatic detection**: App detects Makalu Max and Makalu 67 automatically on startup — same panel, same controls
+- **8-button remapping**: Makalu Max supports 8 programmable buttons (vs 6 on Makalu 67); remap and sniper assignments extended accordingly
+- **Model name display**: Switcher button and RGB Lighting section header show the detected model name ("Makalu 67" or "Makalu Max")
+
+### DisplayPad — Brightness Control
+
+- **Brightness dropdown** (☀ 0%/25%/50%/75%/100%) added next to the rotation menu — reverse-engineered from USB capture (`12 03 00 00 [%]`)
+- Brightness is saved to config and automatically restored on device reconnect or app restart
+
+### UI / UX
+
+- **Device switcher buttons** now turn **green** when the device is connected (instead of always staying gray when not active). Active device stays blue, disconnected stays gray — applies to Keyboard, Mouse, DisplayPad, and OBS
+- **DisplayPad busy-at-boot retry**: If the DisplayPad is busy when the app starts (e.g. after autostart), the app retries up to 5× with increasing delays (2 s, 4 s, 6 s, 8 s, 10 s) before giving up
+
+### Build
+
+- Added `makalu-controller` binary to AppImage (was missing — caused errno 2 on Custom RGB in frozen builds)
+- Added `build.sh` for reproducible AppImage builds
+
+---
+
+## [1.6.1-beta] - 2026-03-25
+
+### Makalu Max (PID 0x0002) — Initial Support
+
+- Device constants and `detect_model()` added to controller
+- Default button layout for Makalu Max defined (`REMAP_DEFAULTS_MAX`)
+
+---
+
 ## [1.6.0] - 2026-03-25
 
 ### Mountain DisplayPad — Full Support
