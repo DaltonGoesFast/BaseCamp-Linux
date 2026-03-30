@@ -56,7 +56,7 @@ Upload a single image or animated GIF that is **automatically split across all 1
 
 ### Button Actions (K1–K12)
 
-- **Action types:** Shell command, URL, Folder, App, Page navigation, OBS (Scene/Record/Stream)
+- **Action types:** Shell command, URL, Folder, App, Page navigation, OBS (Scene/Record/Stream), Macro
 - Actions save immediately on change — no confirmation button needed
 - Key events detected via HID with debounce, actions execute even during GIF animation
 
@@ -65,6 +65,86 @@ Upload a single image or animated GIF that is **automatically split across all 1
 - Rotate all button icons by **0° / 90° / 180° / 270°** for mounting the pad in any orientation (e.g. SimRacing setups)
 - Preview thumbnails rotate live in the GUI
 - Rotation setting persists across restarts
+
+---
+
+## Macros
+
+<p align="center">
+  <img src="docs/macros.png" alt="Macro Editor" width="320"/>
+</p>
+
+Create custom macros and assign them to any button on your keyboard (D1–D4) or DisplayPad (K1–K12). Macros are software-executed sequences of actions that run when the assigned button is pressed.
+
+### Macro Editor
+
+Open the **Macros** tab in the switcher bar to create and manage macros.
+
+- **Create / Delete / Duplicate** macros — each macro has a unique name (auto-numbered: Macro, Macro 1, Macro 2, …)
+- **Reorder actions** with the ▲ / ▼ buttons, delete with ✕
+- **Export / Import** macros as JSON files for sharing or backup
+- **Auto-save** — changes are saved automatically when you leave a field
+
+### Available Actions
+
+| Action | Description | Value |
+|--------|-------------|-------|
+| **Key Tap** | Press and release a key | Key name (e.g. `ctrl`, `a`, `f1`) |
+| **Key Down** | Press and hold a key | Key name |
+| **Key Up** | Release a held key | Key name |
+| **Mouse Click** | Click a mouse button | `left`, `right`, `middle`, `back`, `forward` |
+| **Mouse Move** | Move cursor to an absolute position | `x, y` (e.g. `500, 300`) |
+| **Mouse Path** | Play back a recorded mouse movement | Recording file (selected via picker) |
+| **Mouse Scroll** | Scroll the mouse wheel | `up 3` or `down 5` (direction + amount) |
+| **Delay** | Wait before the next action | Milliseconds (e.g. `200`) |
+| **Type Text** | Type a string character by character | Any text |
+| **Shell** | Run a shell command | Command (e.g. `firefox`) |
+| **URL** | Open a URL in the default browser | URL |
+| **Folder** | Open a folder in the file manager | Path |
+
+For key actions, click the **Rec** button to capture the next keypress from your keyboard instead of typing the name manually. For mouse click, the **Rec** button opens a capture dialog (left/right/middle click on it, or use the quick-pick buttons for back/forward).
+
+### Mouse Path Recording
+
+Click **Rec Mouse** to record mouse movement:
+
+1. A fullscreen overlay appears with a screenshot of your desktop as background — you can see where you're pointing
+2. Press **Space** to start recording — move the mouse freely
+3. Press **Space** again to stop — the movement is saved as a reusable recording file
+4. An optional **"Add left click at end"** checkbox (enabled by default) appends a click at the final position
+
+> **Privacy note:** The desktop screenshot is taken locally using your compositor's screenshot tool (Spectacle on KDE, grim on Sway, gnome-screenshot on GNOME, scrot on X11). It is used only as a visual background during recording, never sent anywhere, and automatically deleted when recording stops. This approach is required because Wayland does not allow applications to track the mouse cursor across the screen — the fullscreen overlay window receives mouse motion events while showing you where you are pointing.
+
+Recordings are saved to `~/.config/mountain-time-sync/mouse_recordings/` and can be reused across multiple macros. Use the **"..."** button on a Mouse Path action to pick from saved recordings, or the **✕** button to delete them.
+
+### Repeat Modes
+
+| Mode | Description |
+|------|-------------|
+| **Once** | Execute the action sequence once |
+| **N Times** | Repeat the sequence a configurable number of times |
+| **Toggle** | First button press starts looping, second press stops |
+
+### Assigning Macros to Buttons
+
+In the **Keyboard** (Numpad Keys section) or **DisplayPad** (Button Actions), select **Macro** as the action type for any button. A dropdown shows all available macros by name — pick one and the macro UUID is saved. When the button is pressed, the macro executes in a background thread.
+
+### Requirements
+
+Macro execution requires **xdotool** (X11) or **ydotool** (Wayland) for keyboard and mouse simulation:
+
+```bash
+# Fedora / Nobara
+sudo dnf install xdotool
+
+# Debian / Ubuntu
+sudo apt install xdotool
+
+# Arch / CachyOS / Manjaro
+sudo pacman -S xdotool
+```
+
+The app auto-detects which tool is available and uses it. If neither is installed, a warning message is shown with the install command.
 
 ---
 
@@ -95,7 +175,7 @@ The keyboard panel is split into a persistent **dashboard** at the top and colla
 - **Display styles** — Switch between Analog and Digital clock on the keyboard display
 - **24H / 12H** — Toggle clock format
 - **Monitor mode** — Live metrics on the keyboard display: CPU%, GPU%, RAM%, HDD%, Network MB/s
-- **Button actions (D1–D4)** — Assign Shell commands, URLs, folders, installed apps or OBS actions to D1–D4 — with native folder picker, searchable app picker and OBS scene selector. Actions save immediately on change. Use **Reset Buttons Flash** after first setup or when switching from Mountain Base Camp — BaseCamp may have stored its own actions in the keyboard's flash memory, which can cause two actions to fire on a single button press. Reset Buttons Flash overwrites all four slots with your configured actions, clearing any leftover BaseCamp data.
+- **Button actions (D1–D4)** — Assign Shell commands, URLs, folders, installed apps, OBS actions or Macros to D1–D4 — with native folder picker, searchable app picker and OBS scene selector. Actions save immediately on change. Use **Reset Buttons Flash** after first setup or when switching from Mountain Base Camp — BaseCamp may have stored its own actions in the keyboard's flash memory, which can cause two actions to fire on a single button press. Reset Buttons Flash overwrites all four slots with your configured actions, clearing any leftover BaseCamp data.
 - **Image upload (D1–D4)** — Upload images to D-buttons via the **Upload Images** dialog or individual per-slot upload buttons — automatically converted and resized (GIF frame picker included). Images are saved to the **Image Library** for quick reuse.
 - **Image Library** — All uploaded images are stored locally as thumbnails. Pick from previously used images with one click instead of browsing the file system every time. Images can be deleted from the library individually.
 - **Main display upload** — Upload any image to the keyboard's main display — with Image Library support for quick reuse
