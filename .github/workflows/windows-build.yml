@@ -8,37 +8,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup MSYS2
-        uses: msys2/setup-msys2@v2
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-pkg-config
-            mingw-w64-ucrt-x86_64-libusb
-            git
-            make
+          python-version: '3.10' # Stable version for these types of tools
 
-      - name: Build Project
-        shell: msys2 {0}
+      - name: Install Dependencies
         run: |
-          # Create build directory and move into it
-          mkdir -p output
-          cd output
-          
-          # Run CMake pointing to the root where CMakeLists.txt lives
-          # We use -S .. to explicitly set the Source to the parent directory
-          cmake -G "Unix Makefiles" -S .. -B .
-          
-          # Compile
-          make
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          # Check if there's a requirements file, otherwise install common needs
+          if (Test-Path requirements.txt) { pip install -r requirements.txt }
+          pip install pyusb libusb  # Common for Mountain pads
+          pip install customtkinter # Looks like it's used based on your file list
+
+      - name: Build with PyInstaller
+        run: |
+          # We bundle gui.py into a single EXE. 
+          # --noconsole prevents a command prompt from popping up.
+          pyinstaller --noconsole --onefile gui.py
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BaseCamp-Windows
-          path: |
-            output/*.exe
-            output/*.dll
+          name: BaseCamp-Windows-Exe
+          path: dist/*.exe
