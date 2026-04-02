@@ -20,15 +20,21 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller Pillow pyusb libusb customtkinter darkdetect psutil requests packaging
-          # Create a fake pwd module so the code doesn't crash on Windows
+          
+          # Create fake Linux modules to satisfy Windows imports
           echo "def getpwuid(n): return None" > pwd.py
           echo "def getpwnam(n): return None" > pwd.py
+          
+          # Fake 'resource' module with empty constants the app might look for
+          echo "RLIMIT_AS = 0" > resource.py
+          echo "def getrusage(n): return None" >> resource.py
+          echo "def setrlimit(a, b): pass" >> resource.py
 
       - name: Build with PyInstaller
         run: |
-          # We tell PyInstaller to include our fake pwd.py
           pyinstaller --noconsole --onefile `
             --hidden-import=pwd `
+            --hidden-import=resource `
             --add-data "resources;resources" `
             --add-data "lang;lang" `
             --add-data "devices;devices" `
