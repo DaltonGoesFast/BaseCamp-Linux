@@ -1,0 +1,36 @@
+name: Build Windows Executable
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-pkg-config
+            mingw-w64-ucrt-x86_64-libusb
+            git
+            make
+
+      - name: Build Project
+        shell: msys2 {0}
+        run: |
+          mkdir build
+          cd build
+          cmake .. -G "Unix Makefiles"
+          make
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: BaseCamp-Windows
+          path: build/*.exe
