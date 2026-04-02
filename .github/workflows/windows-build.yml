@@ -20,11 +20,19 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller Pillow pyusb libusb customtkinter darkdetect psutil requests packaging
-          if (Test-Path requirements.txt) { pip install -r requirements.txt }
+          # Create a fake pwd module so the code doesn't crash on Windows
+          echo "def getpwuid(n): return None" > pwd.py
+          echo "def getpwnam(n): return None" > pwd.py
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --noconsole --onefile --add-data "resources;resources" --add-data "lang;lang" --add-data "devices;devices" gui.py
+          # We tell PyInstaller to include our fake pwd.py
+          pyinstaller --noconsole --onefile `
+            --hidden-import=pwd `
+            --add-data "resources;resources" `
+            --add-data "lang;lang" `
+            --add-data "devices;devices" `
+            gui.py
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
