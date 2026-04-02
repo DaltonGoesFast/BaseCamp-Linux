@@ -1,35 +1,17 @@
-name: Build Windows Executable
-on: [push, pull_request, workflow_dispatch]
-
-jobs:
-  build:
-    runs-on: windows-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10' # Stable version for these types of tools
-
-      - name: Install Dependencies
+- name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
-          # Check if there's a requirements file, otherwise install common needs
           if (Test-Path requirements.txt) { pip install -r requirements.txt }
-          pip install pyusb libusb  # Common for Mountain pads
-          pip install customtkinter # Looks like it's used based on your file list
+          pip install pyusb libusb customtkinter darkdetect 
+          pip install Pillow  # <--- This fixes the ModuleNotFoundError: No module named 'PIL'
 
       - name: Build with PyInstaller
         run: |
-          # We bundle gui.py into a single EXE. 
-          # --noconsole prevents a command prompt from popping up.
-          pyinstaller --noconsole --onefile gui.py
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: BaseCamp-Windows-Exe
-          path: dist/*.exe
+          # We add --add-data to include your folders so the EXE isn't "empty"
+          # Format: "source_folder;destination_folder"
+          pyinstaller --noconsole --onefile `
+            --add-data "resources;resources" `
+            --add-data "lang;lang" `
+            --add-data "devices;devices" `
+            gui.py
